@@ -928,22 +928,14 @@ async function openFlow(id) {
 let _detailFlowId = null;
 let _detailRefreshTimer = null;
 
-function renderFlowDetail(flow) {
-  // Reset tab caches when switching to a different flow
-  if (_detailFlowId !== flow.id) {
-    _transcriptLoaded = null;
-    _filesLoaded = null;
-    _currentDetailTab = 'tasks';
-  }
-  _detailFlowId = flow.id;
+function _metaHtml(flow) {
   const tm = TYPE_META[flow.flow_type] || TYPE_META.general;
   const dur = flow.finished_at
     ? ((flow.finished_at - flow.created_at)/60).toFixed(1)+'m'
     : 'running…';
   const isRunning = flow.status === 'running';
   const tok = allTokensByFlow[flow.id] || flow._tokens || {};
-
-  let html = `
+  let h = `
     <div class="flow-meta-row">
       <span class="badge badge-${flow.status}">${isRunning?'<span class="dot-anim"></span> ':''}${flow.status}</span>
       <span style="font-size:13px;color:${tm.color};font-weight:600">${tm.emoji} ${tm.label}</span>
@@ -951,18 +943,16 @@ function renderFlowDetail(flow) {
       ${flow.hermes_items_stored ? `<span style="font-size:12px;color:var(--purple)">⬡ ${flow.hermes_items_stored}</span>` : ''}
       ${flow.replan_count ? `<span style="font-size:12px;color:var(--yellow)">↻ ${flow.replan_count} replans</span>` : ''}
     </div>
-    <div class="flow-objective">${esc(flow.objective||'')}</div>
-    ${tok.total > 0 ? `
+    <div class="flow-objective">${esc(flow.objective||'')}</div>`;
+  if (tok.total > 0) h += `
     <div class="tok-row">
       <span class="tok-label">⬡ Tokens</span>
       <span class="tok-chip tok-total">${fmtNum(tok.total)} total</span>
       <span class="tok-chip tok-prompt">${fmtNum(tok.prompt||0)} in</span>
       <span class="tok-chip tok-compl">${fmtNum(tok.completion||0)} out</span>
       ${tok.calls > 0 ? `<span class="tok-chip tok-calls">${tok.calls} calls</span>` : ''}
-    </div>` : ''}`;
-
-  if (isRunning) {
-    html += `
+    </div>`;
+  if (isRunning) h += `
     <div class="flow-actions">
       <button class="btn-stop" onclick="stopFlow('${flow.id}')">⬛ Stop Flow</button>
     </div>
@@ -975,35 +965,18 @@ function renderFlowDetail(flow) {
         <button class="steer-btn" onclick="steerFlow('${flow.id}')">Send</button>
       </div>
     </div>`;
-  }
+  if (flow.replan_count > 0) h += `<div class="replan-banner">↻ Replanned ${flow.replan_count}× — agents adapted the task list</div>`;
+  if (flow.repair_count > 0) h += `<div class="replan-banner">🛠 Final validation repaired ${flow.repair_count}×</div>`;
+  return h;
+}
 
-  if (flow.replan_count > 0) {
-    html += `<div class="replan-banner">↻ Replanned ${flow.replan_count}× — agents adapted the task list</div>`;
-  }
-  if (flow.repair_count > 0) {
-    html += `<div class="replan-banner">🛠 Final validation repaired ${flow.repair_count}×</div>`;
-  }
-
-  // Tab bar
-  html += `
-  <div class="detail-tabs">
-    <button class="detail-tab active" id="tab-tasks-${flow.id}" onclick="switchDetailTab('tasks','${flow.id}')">Tasks</button>
-    <button class="detail-tab" id="tab-transcript-${flow.id}" onclick="switchDetailTab('transcript','${flow.id}')">Transcript</button>
-    <button class="detail-tab" id="tab-files-${flow.id}" onclick="switchDetailTab('files','${flow.id}')">Files</button>
-  </div>`;
-
-  // Tasks panel
-  html += `<div id="panel-tasks-${flow.id}" class="detail-panel">`;
-
-  if (!flow.tasks?.length) {
-    html += '<div style="color:var(--text2);font-size:13px;padding:16px 0">Agents are planning…</div>';
-  }
-
-  (flow.tasks||[]).forEach(t => {
+function _taskCardsHtml(flow) {
+  if (!flow.tasks?.length) return '<div style="color:var(--text2);font-size:13px;padding:16px 0">Agents are planning…</div>';
+  return (flow.tasks||[]).map(t => {
     const ac = AGENT_COLORS[t.agent]||'var(--accent)';
     const sdone = t.subtasks?.filter(s=>s.status==='finished'||s.status==='superseded').length||0;
     const stotal = t.subtasks?.length||0;
-    html += `
+    return `
     <div class="card" id="ftask-${t.id}">
       <div class="card-header" onclick="toggleCard('ftask-${t.id}')">
         <span class="agent-tag" style="background:${ac}22;color:${ac}">${t.agent}</span>
@@ -1019,29 +992,20 @@ function renderFlowDetail(flow) {
         ${t.result ? `<div class="task-result">${esc(t.result.slice(0,600))}</div>` : ''}
       </div>
     </div>`;
-  });
+  }).join('');
+}
 
-  html += `</div>`; // end panel-tasks
+// Surgical update — only patches meta + tasks panel, never touches transcript/files
+function patchFlowDetail(flow) {
+  const metaEl = document.getElementById(`flow-meta-${flow.id}`);
+  const tasksEl = document.getElementById(`panel-tasks-${flow.id}`);
+  if (!metaEl || !tasksEl) { renderFlowDetail(flow); return; }
 
-  // Transcript panel
-  html += `<div id="panel-transcript-${flow.id}" class="detail-panel" style="display:none">
-    <div id="transcript-body-${flow.id}" style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">Loading transcript…</div>
-  </div>`;
+  metaEl.innerHTML = _metaHtml(flow);
 
-  // Files panel
-  html += `<div id="panel-files-${flow.id}" class="detail-panel" style="display:none">
-    <div id="files-body-${flow.id}" style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">Loading files…</div>
-  </div>`;
-
-  // Capture which cards are currently open BEFORE replacing the DOM
   const openCardIds = new Set();
-  document.querySelectorAll('#detail-content .card.open').forEach(c => openCardIds.add(c.id));
-  // Snapshot active tab content so we can restore it after re-render
-  const activeTab = _currentDetailTab;
-
-  document.getElementById('detail-content').innerHTML = html;
-
-  // Restore open state for any cards that were open before the refresh
+  tasksEl.querySelectorAll('.card.open').forEach(c => openCardIds.add(c.id));
+  tasksEl.innerHTML = _taskCardsHtml(flow);
   openCardIds.forEach(id => {
     const card = document.getElementById(id);
     if (!card) return;
@@ -1049,30 +1013,44 @@ function renderFlowDetail(flow) {
     const body = card.querySelector('.card-body');
     if (body) body.style.display = 'block';
   });
+}
 
-  // Restore active tab (handles auto-refresh while on transcript/files tab)
-  if (activeTab !== 'tasks') {
-    // Switch visually without triggering a reload if already loaded
-    ['tasks','transcript','files'].forEach(t => {
-      const btn = document.getElementById(`tab-${t}-${flow.id}`);
-      const panel = document.getElementById(`panel-${t}-${flow.id}`);
-      if (btn) btn.classList.toggle('active', t === activeTab);
-      if (panel) panel.style.display = t === activeTab ? '' : 'none';
-    });
-    // Reload transcript/files after DOM replacement (content is gone)
-    if (activeTab === 'transcript') loadTranscript(flow.id);
-    if (activeTab === 'files') loadExplorer(flow.id);
+function renderFlowDetail(flow) {
+  // Reset tab caches when switching to a different flow
+  if (_detailFlowId !== flow.id) {
+    _transcriptLoaded = null;
+    _filesLoaded = null;
+    _currentDetailTab = 'tasks';
   }
+  _detailFlowId = flow.id;
 
-  // Auto-refresh detail while running — only start timer once per flow
+  const html = `
+    <div id="flow-meta-${flow.id}">${_metaHtml(flow)}</div>
+    <div class="detail-tabs">
+      <button class="detail-tab active" id="tab-tasks-${flow.id}" onclick="switchDetailTab('tasks','${flow.id}')">Tasks</button>
+      <button class="detail-tab" id="tab-transcript-${flow.id}" onclick="switchDetailTab('transcript','${flow.id}')">Transcript</button>
+      <button class="detail-tab" id="tab-files-${flow.id}" onclick="switchDetailTab('files','${flow.id}')">Files</button>
+    </div>
+    <div id="panel-tasks-${flow.id}" class="detail-panel">${_taskCardsHtml(flow)}</div>
+    <div id="panel-transcript-${flow.id}" class="detail-panel" style="display:none">
+      <div id="transcript-body-${flow.id}" style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">Click to load transcript…</div>
+    </div>
+    <div id="panel-files-${flow.id}" class="detail-panel" style="display:none">
+      <div id="files-body-${flow.id}" style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">Loading files…</div>
+    </div>`;
+
+  document.getElementById('detail-content').innerHTML = html;
+
+  // Auto-refresh: patch only, never destroy transcript/files panels
   clearInterval(_detailRefreshTimer);
-  if (isRunning) {
+  if (flow.status === 'running') {
     _detailRefreshTimer = setInterval(async () => {
       if (_detailFlowId !== flow.id) { clearInterval(_detailRefreshTimer); return; }
       await loadTokens();
       const updated = await fetch(`${API}/api/flows/${flow.id}`).then(r=>r.json()).catch(()=>null);
-      if (updated) renderFlowDetail(updated);
-      if (updated?.status !== 'running') clearInterval(_detailRefreshTimer);
+      if (!updated) return;
+      patchFlowDetail(updated);
+      if (updated.status !== 'running') clearInterval(_detailRefreshTimer);
     }, 4000);
   }
 }
@@ -1395,12 +1373,28 @@ function renderLlmCard(e) {
   const typeClass = 'llm-' + (e.task_type || 'orchestrator');
   const tok = e.prompt_tokens || e.completion_tokens
     ? `${fmtNum(e.prompt_tokens||0)}↑ ${fmtNum(e.completion_tokens||0)}↓` : '';
-  // Build first user/last user message snippet for the header
   const msgs = e.messages || [];
   const lastUser = [...msgs].reverse().find(m => m.role === 'user');
   const snippet = (lastUser?.content || '').slice(0, 80).replace(/\n/g, ' ');
 
   let bodyHtml = '';
+
+  // 🧠 Thinking section — shown first, most prominent
+  if (e.thinking) {
+    const thinkId = id + '-think';
+    bodyHtml += `<div class="llm-msg" style="background:#0d1a0d">
+      <div class="llm-role" style="color:var(--green);cursor:pointer;display:flex;align-items:center;gap:6px"
+           onclick="toggleLlmCard('${thinkId}')">
+        <span>🧠 thinking</span><span style="font-size:10px;color:var(--text2)">(${e.thinking.length} chars)</span>
+        <span id="${thinkId}-chev" style="font-size:11px;color:var(--text2)">›</span>
+      </div>
+      <div id="${thinkId}" style="display:none">
+        <div class="llm-content" style="color:#7ec87e">${esc(e.thinking)}</div>
+      </div>
+    </div>`;
+  }
+
+  // Messages
   msgs.forEach(m => {
     const roleCls = m.role === 'system' ? 'system' : m.role === 'user' ? 'user' : 'assistant';
     bodyHtml += `<div class="llm-msg">
@@ -1408,10 +1402,12 @@ function renderLlmCard(e) {
       <div class="llm-content">${esc(m.content || '')}</div>
     </div>`;
   });
+
+  // Response
   if (e.response) {
-    bodyHtml += `<div class="llm-msg">
-      <div class="llm-role assistant">assistant</div>
-      <div class="llm-content">${esc(e.response)}</div>
+    bodyHtml += `<div class="llm-msg" style="background:#0a1525">
+      <div class="llm-role assistant">⬅ response</div>
+      <div class="llm-content" style="color:#79c0ff">${esc(e.response)}</div>
     </div>`;
   }
 
@@ -1419,6 +1415,7 @@ function renderLlmCard(e) {
     <div class="llm-card-hdr" onclick="toggleLlmCard('${id}')">
       <span class="llm-badge ${typeClass}">${esc(e.task_type||'llm')}</span>
       <span class="llm-title">#${e.n||'?'} ${esc(snippet)}</span>
+      ${e.thinking ? '<span style="font-size:10px;color:var(--green)">🧠</span>' : ''}
       <span class="llm-tok">${tok}</span>
       <span class="llm-chevron">›</span>
     </div>
@@ -1427,8 +1424,18 @@ function renderLlmCard(e) {
 }
 
 function toggleLlmCard(id) {
-  const card = document.getElementById(id);
-  if (card) card.classList.toggle('open');
+  const el = document.getElementById(id);
+  if (!el) return;
+  // Check if it's a card or a sub-element
+  if (el.classList.contains('llm-card')) {
+    el.classList.toggle('open');
+  } else {
+    // It's the thinking sub-toggle
+    const isHidden = el.style.display === 'none';
+    el.style.display = isHidden ? '' : 'none';
+    const chev = document.getElementById(id + '-chev');
+    if (chev) chev.style.transform = isHidden ? 'rotate(90deg)' : '';
+  }
 }
 
 function _transcriptScrollEl(flowId) {

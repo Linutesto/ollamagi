@@ -32,7 +32,8 @@ def register_llm_callback(flow_id: str, cb: Callable):
 
 
 def _fire_llm_log(flow_id: str | None, messages: list, response: str,
-                  task_type: str, model: str, prompt_tokens: int, completion_tokens: int):
+                  task_type: str, model: str, prompt_tokens: int, completion_tokens: int,
+                  thinking: str = ""):
     if not flow_id:
         return
     with _llm_lock:
@@ -52,6 +53,7 @@ def _fire_llm_log(flow_id: str | None, messages: list, response: str,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "messages": messages,
+            "thinking": thinking,
             "response": response,
         })
     except Exception:
@@ -209,11 +211,11 @@ def _model_for_task(task_type: str) -> str:
 _CALL_PROFILES = {
     # Small structured calls must stay small. Without num_predict, a local
     # thinking model can generate until the full context limit is exhausted.
-    "fast": {"num_predict": 384, "timeout": 90.0, "think": False},
+    "fast":         {"num_predict": 384,  "timeout": 90.0,  "think": False},
     "orchestrator": {"num_predict": 2048, "timeout": 600.0, "think": False},
-    "analysis": {"num_predict": 2048, "timeout": 600.0, "think": False},
-    "tools": {"num_predict": 3072, "timeout": 600.0, "think": False},
-    "coder": {"num_predict": 4096, "timeout": 600.0, "think": False},
+    "analysis":     {"num_predict": 3072, "timeout": 600.0, "think": True},
+    "tools":        {"num_predict": 3072, "timeout": 600.0, "think": False},
+    "coder":        {"num_predict": 4096, "timeout": 600.0, "think": True},
 }
 
 
@@ -248,7 +250,8 @@ def chat(messages: list[dict], task_type: str = "orchestrator",
         ct = data.get("eval_count", 0)
         record_tokens(flow_id, pt, ct)
         response_text = data["message"]["content"]
-        _fire_llm_log(flow_id, messages, response_text, task_type, model, pt, ct)
+        thinking_text = data["message"].get("thinking", "") or ""
+        _fire_llm_log(flow_id, messages, response_text, task_type, model, pt, ct, thinking_text)
         return response_text
 
     # Streaming: run in daemon thread, yield tokens via queue, poll stop signal
@@ -264,8 +267,11 @@ def chat(messages: list[dict], task_type: str = "orchestrator",
                         if not line:
                             continue
                         chunk = json.loads(line)
-                        if "message" in chunk and "content" in chunk["message"]:
-                            token_q.put(("tok", chunk["message"]["content"]))
+                        msg = chunk.get("message", {})
+                        if msg.get("thinking"):
+                            token_q.put(("think", msg["thinking"]))
+                        if msg.get("content"):
+                            token_q.put(("tok", msg["content"]))
                         if chunk.get("done"):
                             pt = chunk.get("prompt_eval_count", 0)
                             ct = chunk.get("eval_count", 0)
@@ -277,6 +283,7 @@ def chat(messages: list[dict], task_type: str = "orchestrator",
         threading.Thread(target=_worker, daemon=True).start()
 
         accumulated: list[str] = []
+        thinking_acc: list[str] = []
         while True:
             if _is_stopped(flow_id):
                 raise FlowStoppedException(f"Flow {flow_id} stopped")
@@ -287,10 +294,12 @@ def chat(messages: list[dict], task_type: str = "orchestrator",
                 if kind == "tok":
                     accumulated.append(val)
                     yield val
+                elif kind == "think":
+                    thinking_acc.append(val)
                 elif kind == "done":
                     pt, ct = val
                     _fire_llm_log(flow_id, messages, "".join(accumulated),
-                                  task_type, model, pt, ct)
+                                  task_type, model, pt, ct, "".join(thinking_acc))
                     return
                 else:
                     raise val
