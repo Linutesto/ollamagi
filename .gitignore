@@ -1,0 +1,53 @@
+# Runtime outputs — never commit agent-generated files
+workspace/
+
+# Environment and secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Hermes / SQLite databases
+*.sqlite
+*.sqlite3
+*.db
+
+# SSH keys (never commit)
+*.pem
+id_rsa
+id_ed25519
+id_ecdsa
+ollamagi_agent
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Personal machine docs
+CURRENT_CIVILIZATION_MAP.md
+OLLAMAGI_ARCHITECTURE.md
+
+# Flows not included in public release
+flows/bug_bounty.py

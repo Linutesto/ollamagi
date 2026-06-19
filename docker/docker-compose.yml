@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  ollamagi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ollamagi
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7654:7654"
+    volumes:
+      - ${OLLAMAGI_DIR:-.}:/app
+      - ${HERMES_DB_DIR:-~/.hermes}/cognitive_memory.sqlite:/hermes/cognitive_memory.sqlite:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SSH_KEY:-~/.ssh/ollamagi_agent}:/root/.ssh/id_ed25519:ro
+    environment:
+      - HERMES_DB=/hermes/cognitive_memory.sqlite
+      - PYTHONPATH=/app
+      - SSH_HOST=${SSH_HOST:-172.17.0.1}
+      - SSH_USER=${SSH_USER:-root}
+      - OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}
+      - MODEL_ORCHESTRATOR=${MODEL_ORCHESTRATOR:-qwen2.5:32b}
+      - MODEL_CODER=${MODEL_CODER:-qwen2.5-coder:32b}
+    network_mode: host

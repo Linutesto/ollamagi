@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>OllamAGI</title>
+<style>
+:root {
+  --bg:      #0d1117;
+  --bg2:     #161b22;
+  --bg3:     #21262d;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --text2:   #8b949e;
+  --accent:  #58a6ff;
+  --green:   #3fb950;
+  --red:     #f85149;
+  --yellow:  #d29922;
+  --purple:  #bc8cff;
+  --orange:  #ffa657;
+  --nav-h:   60px;
+  --header-h: 52px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+
+/* HEADER */
+.header { height: var(--header-h); background: var(--bg2); border-bottom: 1px solid var(--border);
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 0 14px; flex-shrink: 0; gap: 10px; }
+.logo { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.logo-icon { width: 30px; height: 30px; background: var(--accent); border-radius: 8px;
+             display: flex; align-items: center; justify-content: center;
+             font-size: 15px; font-weight: 900; color: #000; }
+.logo-text { font-size: 17px; font-weight: 700; }
+.header-pills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.header-pills::-webkit-scrollbar { display: none; }
+.pill { font-size: 11px; background: var(--bg3); border: 1px solid var(--border);
+        padding: 3px 9px; border-radius: 20px; color: var(--text2); white-space: nowrap; flex-shrink: 0; }
+.pill.live { border-color: var(--green); color: var(--green); }
+.pill.tok { border-color: var(--yellow); color: var(--yellow); }
+
+/* PAGES */
+.pages { flex: 1; overflow: hidden; position: relative; }
+.page { position: absolute; inset: 0; overflow-y: auto; display: none;
+        padding: 14px 14px calc(var(--nav-h) + 14px); }
+.page.active { display: block; }
+
+/* BOTTOM NAV */
+.nav { height: var(--nav-h); background: var(--bg2); border-top: 1px solid var(--border);
+       display: flex; align-items: stretch; flex-shrink: 0; }
+.nav-btn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+           gap: 3px; background: none; border: none; color: var(--text2); cursor: pointer;
+           font-size: 9px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+           position: relative; transition: color 0.15s; }
+.nav-btn.active { color: var(--accent); }
+.nav-btn.active::before { content: ''; position: absolute; top: 0; left: 20%; right: 20%;
+  height: 2px; background: var(--accent); border-radius: 0 0 4px 4px; }
+.nav-icon { font-size: 19px; line-height: 1; }
+.nav-badge { position: absolute; top: 5px; right: calc(50% - 20px);
+             background: var(--red); color: #fff; font-size: 9px; font-weight: 700;
+             padding: 1px 4px; border-radius: 10px; min-width: 15px; text-align: center; }
+.nav-badge.hidden { display: none; }
+
+/* CARDS */
+.card { background: var(--bg2); border: 1px solid var(--border);
+        border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+.card-header { padding: 13px 14px; display: flex; align-items: center; gap: 10px;
+               cursor: pointer; user-select: none; }
+.card-header:active { background: var(--bg3); }
+.card-body { border-top: 1px solid var(--border); }
+.card-title { font-size: 14px; font-weight: 600; flex: 1; line-height: 1.3; }
+.card-sub { font-size: 11px; color: var(--text2); margin-top: 2px; }
+.card-chevron { color: var(--text2); font-size: 14px; transition: transform 0.2s; flex-shrink: 0; }
+.card.open .card-chevron { transform: rotate(90deg); }
+.card-inner { padding: 13px 14px; }
+
+/* BADGES */
+.badge { display: inline-flex; align-items: center; gap: 4px;
+         font-size: 11px; font-weight: 700; padding: 3px 8px;
+         border-radius: 20px; flex-shrink: 0; }
+.badge-created  { background: #30363d; color: var(--text2); }
+.badge-running  { background: #1f3a5f; color: var(--accent); }
+.badge-finished { background: #1a3a1a; color: var(--green); }
+.badge-failed   { background: #3a1a1a; color: var(--red); }
+.badge-waiting  { background: #3a3a1a; color: var(--yellow); }
+.dot-anim { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: currentColor; animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* AGENT TAGS */
+.agent-tag { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
+             flex-shrink: 0; font-family: monospace; }
+
+/* SUBTASKS */
+.subtask { padding: 10px 14px; border-bottom: 1px solid var(--border);
+           display: flex; gap: 10px; align-items: flex-start; }
+.subtask:last-child { border-bottom: none; }
+.subtask-status { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.subtask-body { flex: 1; min-width: 0; }
+.subtask-title { font-size: 13px; font-weight: 500; }
+.subtask-result { font-size: 12px; color: var(--text2); margin-top: 6px;
+                   font-family: 'Courier New', monospace; line-height: 1.5;
+                   white-space: pre-wrap; word-break: break-word;
+                   max-height: 130px; overflow-y: auto;
+                   background: var(--bg3); padding: 8px; border-radius: 6px; }
+.subtask-agent { font-size: 11px; color: var(--purple); font-weight: 700; margin-top: 2px; }
+.task-result { margin: 0 14px 12px; padding: 10px 12px; background: var(--bg3);
+               border-radius: 8px; font-size: 13px; color: var(--text2); line-height: 1.6;
+               max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+
+/* FORMS */
+.section-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: 1px; color: var(--text2); margin-bottom: 10px; }
+.form-field { margin-bottom: 14px; }
+.form-label { display: block; font-size: 13px; font-weight: 600; color: var(--text2); margin-bottom: 5px; }
+.form-input { width: 100%; background: var(--bg2); border: 1px solid var(--border);
+              color: var(--text); padding: 11px 13px; border-radius: 10px;
+              font-size: 15px; outline: none; font-family: inherit; appearance: none; }
+.form-input:focus { border-color: var(--accent); }
+textarea.form-input { min-height: 90px; resize: none; line-height: 1.5; }
+select.form-input { cursor: pointer; }
+
+/* TYPE GRID */
+.type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.type-btn { padding: 11px 8px; background: var(--bg2); border: 2px solid var(--border);
+            color: var(--text2); border-radius: 10px; cursor: pointer; text-align: center;
+            font-size: 12px; font-weight: 600; transition: all 0.15s; }
+.type-btn:active { transform: scale(0.97); }
+.type-btn.selected { border-color: var(--accent); color: var(--text); background: #1f3a5f22; }
+.type-btn .type-icon { font-size: 18px; display: block; margin-bottom: 3px; }
+.run-btn { width: 100%; padding: 15px; background: var(--accent); color: #000;
+           border: none; border-radius: 12px; font-size: 15px; font-weight: 800;
+           cursor: pointer; letter-spacing: 0.5px; transition: all 0.15s; }
+.run-btn:active { transform: scale(0.98); background: #79c0ff; }
+.run-btn:disabled { opacity: 0.5; }
+
+/* LOGS */
+.log-line { display: flex; gap: 8px; padding: 4px 0;
+            border-bottom: 1px solid #1a1f26; font-family: 'Courier New', monospace;
+            font-size: 12px; line-height: 1.5; }
+.log-ts { color: #484f58; flex-shrink: 0; font-size: 10px; padding-top: 2px; }
+.log-msg { flex: 1; word-break: break-word; }
+.log-info    { color: var(--text2); }
+.log-error   { color: var(--red); }
+.log-success { color: var(--green); }
+.log-warn    { color: var(--yellow); }
+.log-controls { display: flex; gap: 6px; margin-bottom: 12px; }
+.log-filter-btn { padding: 7px 12px; background: var(--bg2); border: 1px solid var(--border);
+                  color: var(--text2); border-radius: 8px; font-size: 12px; cursor: pointer; }
+.log-filter-btn.active { border-color: var(--accent); color: var(--accent); }
+.log-clear { margin-left: auto; padding: 7px 12px; background: none;
+             border: 1px solid var(--border); color: var(--text2); border-radius: 8px;
+             font-size: 12px; cursor: pointer; }
+
+/* MEMORY */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 18px; }
+.stat-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+            padding: 12px 8px; text-align: center; }
+.stat-val { font-size: 20px; font-weight: 800; color: var(--text); font-family: monospace; }
+.stat-label { font-size: 10px; color: var(--text2); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.5px; }
+.memory-item { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+               padding: 11px 13px; margin-bottom: 8px; }
+.memory-type { font-size: 11px; font-weight: 700; text-transform: uppercase;
+               letter-spacing: 0.5px; margin-bottom: 5px; }
+.memory-content { font-size: 13px; color: var(--text); line-height: 1.5; }
+.memory-conf { font-size: 11px; color: var(--text2); margin-top: 4px; }
+.search-bar { display: flex; gap: 8px; margin-bottom: 14px; }
+.search-input { flex: 1; background: var(--bg2); border: 1px solid var(--border);
+                color: var(--text); padding: 11px 13px; border-radius: 10px; font-size: 14px; outline: none; }
+.search-input:focus { border-color: var(--accent); }
+.search-btn { padding: 11px 14px; background: var(--accent); color: #000;
+              border: none; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; }
+
+/* SYSTEM */
+.sys-section { margin-bottom: 18px; }
+.sys-row { display: flex; justify-content: space-between; align-items: center;
+           padding: 11px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.sys-row:last-child { border-bottom: none; }
+.sys-key { color: var(--text2); font-size: 12px; }
+.sys-val { font-weight: 600; font-family: monospace; font-size: 12px; text-align: right; }
+.ssh-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px;
+           padding: 13px; font-family: 'Courier New', monospace; font-size: 12px;
+           color: var(--green); line-height: 1.8; margin-bottom: 10px; }
+.goal-item { padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.4; }
+.goal-item:last-child { border-bottom: none; }
+.goal-item .priority { font-size: 11px; color: var(--purple); font-weight: 700; margin-top: 3px; }
+
+/* TERMINAL */
+.term-toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+.term-select { flex: 1; background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+               padding: 9px 12px; border-radius: 8px; font-size: 13px; outline: none; appearance: none; }
+.term-clear { padding: 9px 12px; background: none; border: 1px solid var(--border);
+              color: var(--text2); border-radius: 8px; font-size: 12px; cursor: pointer; }
+.term-screen { background: #0a0d12; border: 1px solid var(--border); border-radius: 10px;
+               padding: 12px; font-family: 'Courier New', monospace; font-size: 12.5px;
+               line-height: 1.6; color: #c9d1d9; overflow-y: auto;
+               flex: 1; min-height: 0; }
+.term-screen-wrap { display: flex; flex-direction: column;
+                    height: calc(100vh - var(--header-h) - var(--nav-h) - 140px); }
+.term-line { word-break: break-all; }
+.term-line.out { color: #c9d1d9; }
+.term-line.err { color: var(--red); }
+.term-line.cmd { color: var(--accent); }
+.term-line.ok  { color: var(--green); }
+.term-line.sys { color: var(--text2); font-style: italic; }
+.term-input-row { display: flex; gap: 8px; margin-top: 10px; }
+.term-prompt { color: var(--green); font-family: 'Courier New', monospace;
+               font-size: 13px; padding: 10px 0; flex-shrink: 0; }
+.term-input { flex: 1; background: var(--bg2); border: 1px solid var(--border);
+              color: var(--text); padding: 10px 12px; border-radius: 8px;
+              font-family: 'Courier New', monospace; font-size: 13px; outline: none; }
+.term-input:focus { border-color: var(--accent); }
+.term-send { padding: 10px 14px; background: var(--accent); color: #000;
+             border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+
+/* QUICK LAUNCH SHEET */
+.sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+                 z-index: 100; display: none; }
+.sheet-overlay.open { display: block; }
+.sheet { position: fixed; bottom: 0; left: 0; right: 0; z-index: 101;
+         background: var(--bg2); border-top: 1px solid var(--border);
+         border-radius: 20px 20px 0 0; padding: 0 16px 32px;
+         transform: translateY(100%); transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+         max-height: 88vh; overflow-y: auto; }
+.sheet.open { transform: translateY(0); }
+.sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px;
+                margin: 12px auto 16px; }
+.sheet-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.sheet-subtitle { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
+.sheet-launch { width: 100%; padding: 15px; background: var(--accent); color: #000;
+                border: none; border-radius: 12px; font-size: 15px; font-weight: 800;
+                cursor: pointer; margin-top: 6px; }
+.sheet-launch:active { background: #79c0ff; }
+.sheet-launch:disabled { opacity: 0.5; }
+
+/* QUICK CARDS */
+.quick-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px;
+              padding: 14px; margin-bottom: 10px; display: flex; align-items: center;
+              gap: 14px; cursor: pointer; transition: border-color 0.15s; }
+.quick-card:active { border-color: var(--accent); }
+.quick-card-icon { font-size: 26px; flex-shrink: 0; }
+.quick-card-text { flex: 1; min-width: 0; }
+.quick-card-label { font-size: 14px; font-weight: 600; }
+.quick-card-desc { font-size: 12px; color: var(--text2); margin-top: 3px; }
+.quick-card-arrow { color: var(--accent); font-size: 18px; flex-shrink: 0; }
+
+/* MISC */
+.empty { text-align: center; padding: 50px 16px; color: var(--text2); }
+.empty-icon { font-size: 44px; opacity: 0.3; margin-bottom: 10px; }
+.empty-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.empty-desc { font-size: 13px; line-height: 1.6; }
+.toast { position: fixed; bottom: calc(var(--nav-h) + 14px); left: 50%; transform: translateX(-50%);
+         background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+         padding: 11px 18px; font-size: 13px; font-weight: 600; z-index: 200;
+         box-shadow: 0 4px 20px rgba(0,0,0,0.5); white-space: nowrap;
+         animation: slideUp 0.2s ease; display: none; }
+.toast.show { display: block; }
+@keyframes slideUp { from{opacity:0;transform:translateX(-50%) translateY(8px)} to{opacity:1;transform:translateX(-50%)} }
+.back-btn { display: flex; align-items: center; gap: 6px; background: none; border: none;
+            color: var(--accent); font-size: 15px; cursor: pointer; padding: 0;
+            margin-bottom: 14px; font-weight: 600; }
+.flow-meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; align-items: center; }
+.flow-objective { font-size: 13px; color: var(--text2); line-height: 1.6; margin-bottom: 14px;
+                  background: var(--bg2); border-left: 3px solid var(--accent);
+                  padding: 10px 13px; border-radius: 0 8px 8px 0; }
+.flow-actions { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.btn-stop { padding: 9px 16px; background: none; border: 1px solid var(--red);
+            color: var(--red); border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.btn-stop:active { background: #3a1a1a; }
+.steer-panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+               padding: 12px; margin-bottom: 14px; }
+.steer-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+               color: var(--yellow); margin-bottom: 8px; }
+.steer-row { display: flex; gap: 8px; }
+.steer-input { flex: 1; background: var(--bg3); border: 1px solid var(--border);
+               color: var(--text); padding: 10px 12px; border-radius: 8px;
+               font-size: 13px; outline: none; font-family: inherit; }
+.steer-input:focus { border-color: var(--yellow); }
+.steer-btn { padding: 10px 14px; background: var(--yellow); color: #000;
+             border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.replan-banner { background: #3a3a1a; border: 1px solid var(--yellow); border-radius: 8px;
+                 padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--yellow);
+                 display: flex; align-items: center; gap: 8px; }
+.tok-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.tok-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.tok-reset-btn { font-size: 11px; padding: 4px 10px; background: none; border: 1px solid var(--border);
+                 color: var(--text2); border-radius: 8px; cursor: pointer; font-family: inherit; }
+.tok-reset-btn:active { background: var(--bg2); color: var(--text); }
+.tok-flow-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+                background: var(--bg2); border-radius: 8px; margin-bottom: 5px; font-size: 12px; }
+.tok-flow-name { flex: 1; min-width: 0; color: var(--text2); white-space: nowrap;
+                 overflow: hidden; text-overflow: ellipsis; }
+.tok-flow-val { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.tok-flow-sub { font-size: 10px; color: var(--text2); white-space: nowrap; }
+.tok-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+             color: var(--text2); margin-right: 2px; }
+.tok-chip { font-size: 11px; padding: 3px 8px; border-radius: 12px; font-weight: 600; }
+.tok-total { background: #1e2d3a; color: var(--accent); }
+.tok-prompt { background: #1a2a1a; color: var(--green); }
+.tok-compl  { background: #2a1a2a; color: var(--purple); }
+.tok-calls  { background: var(--bg2); color: var(--text2); }
+.retry-badge { font-size: 10px; color: var(--yellow); font-weight: 700; background: #3a3a1a;
+               padding: 2px 6px; border-radius: 10px; margin-left: 4px; }
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo">
+    <div class="logo-icon">O</div>
+    <span class="logo-text">OllamAGI</span>
+  </div>
+  <div class="header-pills">
+    <span class="pill" id="ws-pill">● offline</span>
+    <span class="pill tok" id="tok-pill">0 tok</span>
+  </div>
+</div>
+
+<!-- PAGES -->
+<div class="pages">
+
+  <!-- FLOWS -->
+  <div class="page active" id="page-flows">
+    <div class="section-title">Active &amp; Recent Flows</div>
+    <div id="flow-list-mobile">
+      <div class="empty"><div class="empty-icon">◎</div>
+        <div class="empty-title">No flows yet</div>
+        <div class="empty-desc">Go to Run tab to start your first flow</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLOW DETAIL -->
+  <div class="page" id="page-detail">
+    <button class="back-btn" onclick="goBack()">‹ All Flows</button>
+    <div id="detail-content"></div>
+  </div>
+
+  <!-- RUN -->
+  <div class="page" id="page-run">
+    <div class="section-title">Flow Type</div>
+    <div class="type-grid">
+      <button class="type-btn selected" data-type="agent_development" onclick="selectType(this)">
+        <span class="type-icon">🤖</span>Agent Dev
+      </button>
+      <button class="type-btn" data-type="product_development" onclick="selectType(this)">
+        <span class="type-icon">💰</span>Product / ROI
+      </button>
+      <button class="type-btn" data-type="research" onclick="selectType(this)">
+        <span class="type-icon">🔬</span>Research
+      </button>
+      <button class="type-btn" data-type="security" onclick="selectType(this)">
+        <span class="type-icon">🔒</span>Security
+      </button>
+      <button class="type-btn" data-type="general" onclick="selectType(this)">
+        <span class="type-icon">⚡</span>General
+      </button>
+      <button class="type-btn" data-type="" onclick="selectType(this)">
+        <span class="type-icon">🎲</span>Auto-detect
+      </button>
+    </div>
+    <div class="form-field">
+      <label class="form-label">Objective</label>
+      <textarea class="form-input" id="run-objective" placeholder="Describe what you want the agents to accomplish…"></textarea>
+    </div>
+    <button class="run-btn" id="run-btn" onclick="startFlow()">▶ Launch Flow</button>
+
+    <div style="margin-top:22px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="section-title">Quick Launches</div>
+      <div id="quick-list"></div>
+    </div>
+  </div>
+
+  <!-- LOGS -->
+  <div class="page" id="page-logs">
+    <div class="log-controls">
+      <button class="log-filter-btn active" onclick="setLogFilter('all',this)">All</button>
+      <button class="log-filter-btn" onclick="setLogFilter('error',this)">Errors</button>
+      <button class="log-filter-btn" onclick="setLogFilter('success',this)">Success</button>
+      <button class="log-clear" onclick="clearLogs()">Clear</button>
+    </div>
+    <div id="log-container"></div>
+  </div>
+
+  <!-- TERMINAL -->
+  <div class="page" id="page-terminal">
+    <div class="term-toolbar">
+      <select class="term-select" id="term-flow-select" onchange="termSwitchFlow(this.value)">
+        <option value="">— select flow —</option>
+      </select>
+      <button class="term-clear" onclick="termClear()">Clear</button>
+    </div>
+    <div class="term-screen-wrap">
+      <div class="term-screen" id="term-screen">
+        <div class="term-line sys">OllamAGI Terminal — select a flow or type a command</div>
+      </div>
+    </div>
+    <div class="term-input-row">
+      <span class="term-prompt">$</span>
+      <input class="term-input" id="term-input" placeholder="bash command…"
+             onkeydown="if(event.key==='Enter')termExec()">
+      <button class="term-send" onclick="termExec()">Run</button>
+    </div>
+  </div>
+
+  <!-- MEMORY -->
+  <div class="page" id="page-memory">
+    <div class="stat-grid">
+      <div class="stat-box"><div class="stat-val" id="m-beliefs">—</div><div class="stat-label">Beliefs</div></div>
+      <div class="stat-box"><div class="stat-val" id="m-memories">—</div><div class="stat-label">Memories</div></div>
+      <div class="stat-box"><div class="stat-val" id="m-goals">—</div><div class="stat-label">Goals</div></div>
+    </div>
+    <div class="search-bar">
+      <input class="search-input" id="mem-search" placeholder="Search Hermes memory…"
+             onkeydown="if(event.key==='Enter')searchMemory()">
+      <button class="search-btn" onclick="searchMemory()">Go</button>
+    </div>
+    <div id="mem-results">
+      <div class="section-title">Active Goals</div>
+      <div id="goals-list"></div>
+    </div>
+  </div>
+
+  <!-- SYSTEM -->
+  <div class="page" id="page-system">
+    <div class="sys-section">
+      <div class="section-title">System</div>
+      <div class="card"><div class="card-inner" id="hw-info">
+        <div class="sys-row"><span class="sys-key">OS</span><span class="sys-val" id="hw-os">—</span></div>
+        <div class="sys-row"><span class="sys-key">CPU</span><span class="sys-val" id="hw-cpu">—</span></div>
+        <div class="sys-row"><span class="sys-key">RAM</span><span class="sys-val" id="hw-ram">—</span></div>
+        <div class="sys-row"><span class="sys-key">GPU</span><span class="sys-val" id="hw-gpu">—</span></div>
+      </div></div>
+    </div>
+    <div class="sys-section">
+      <div class="section-title">Agent SSH Access</div>
+      <div class="ssh-box" id="ssh-info">loading…</div>
+    </div>
+    <div class="sys-section">
+      <div class="tok-header">
+        <span class="section-title" style="margin:0">Token Usage</span>
+        <button class="tok-reset-btn" onclick="resetTokens()">↺ Reset session</button>
+      </div>
+
+      <!-- This session -->
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin:10px 0 6px">
+        This session <span id="tok-session-since" style="font-weight:400;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <div class="card"><div class="card-inner">
+        <div class="sys-row"><span class="sys-key">Total</span><span class="sys-val" id="tok-total">0</span></div>
+        <div class="sys-row"><span class="sys-key">Prompt / in</span><span class="sys-val" id="tok-prompt">0</span></div>
+        <div class="sys-row"><span class="sys-key">Completion / out</span><span class="sys-val" id="tok-compl">0</span></div>
+        <div class="sys-row"><span class="sys-key">LLM calls</span><span class="sys-val" id="tok-calls">0</span></div>
+      </div></div>
+
+      <!-- All time -->
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin:14px 0 6px">All time (all flows)</div>
+      <div class="card"><div class="card-inner">
+        <div class="sys-row"><span class="sys-key">Total</span><span class="sys-val" id="tok-all-total">0</span></div>
+        <div class="sys-row"><span class="sys-key">Prompt / in</span><span class="sys-val" id="tok-all-prompt">0</span></div>
+        <div class="sys-row"><span class="sys-key">Completion / out</span><span class="sys-val" id="tok-all-compl">0</span></div>
+        <div class="sys-row"><span class="sys-key">LLM calls</span><span class="sys-val" id="tok-all-calls">0</span></div>
+      </div></div>
+
+      <!-- Per flow -->
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin:14px 0 6px">Per flow</div>
+      <div id="tok-per-flow"></div>
+    </div>
+    <div class="sys-section">
+      <div class="section-title">Services</div>
+      <div class="card"><div class="card-inner">
+        <div class="sys-row"><span class="sys-key">Ollama</span><span class="sys-val" id="svc-ollama">checking…</span></div>
+        <div class="sys-row"><span class="sys-key">Hermes</span><span class="sys-val" id="svc-hermes">checking…</span></div>
+        <div class="sys-row"><span class="sys-key">WebSocket</span><span class="sys-val" id="svc-ws">—</span></div>
+      </div></div>
+    </div>
+  </div>
+
+</div><!-- /pages -->
+
+<!-- BOTTOM NAV -->
+<nav class="nav">
+  <button class="nav-btn active" id="nav-flows" onclick="switchTab('flows')">
+    <span class="nav-icon">◎</span>Flows
+    <span class="nav-badge hidden" id="badge-running">0</span>
+  </button>
+  <button class="nav-btn" id="nav-run" onclick="switchTab('run')">
+    <span class="nav-icon">▶</span>Run
+  </button>
+  <button class="nav-btn" id="nav-terminal" onclick="switchTab('terminal')">
+    <span class="nav-icon">⌨</span>Terminal
+  </button>
+  <button class="nav-btn" id="nav-logs" onclick="switchTab('logs')">
+    <span class="nav-icon">≡</span>Logs
+    <span class="nav-badge hidden" id="badge-logs">0</span>
+  </button>
+  <button class="nav-btn" id="nav-memory" onclick="switchTab('memory')">
+    <span class="nav-icon">⬡</span>Memory
+  </button>
+  <button class="nav-btn" id="nav-system" onclick="switchTab('system')">
+    <span class="nav-icon">⚙</span>System
+  </button>
+</nav>
+
+<!-- QUICK LAUNCH SHEET -->
+<div class="sheet-overlay" id="sheet-overlay" onclick="closeSheet()"></div>
+<div class="sheet" id="sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title" id="sheet-title">Quick Launch</div>
+  <div class="sheet-subtitle" id="sheet-subtitle">Customize before launching</div>
+  <div id="sheet-fields"></div>
+  <div class="form-field">
+    <label class="form-label">Final objective (auto-built, editable)</label>
+    <textarea class="form-input" id="sheet-objective" style="min-height:80px"></textarea>
+  </div>
+  <button class="sheet-launch" id="sheet-launch-btn" onclick="sheetLaunch()">▶ Launch Flow</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';
+let ws = null;
+let currentTab = 'flows';
+let selectedType = 'agent_development';
+let logs = [];
+let logFilter = 'all';
+let unreadLogs = 0;
+let allTokens = {prompt:0, completion:0, calls:0, total:0};
+let allTokensByFlow = {};
+let termLines = [];
+let termFlowId = '';
+let activeFlows = [];
+
+// ── QUICK LAUNCH CONFIGS ──
+const QUICK_CONFIGS = [
+  {
+    key: 'agent_development',
+    icon: '🤖',
+    label: 'Build an Agent',
+    desc: 'Autonomous agent with tools, memory, deployment',
+    fields: [
+      { id: 'agent_type', label: 'Agent type', type: 'select',
+        opts: ['Web scraper/crawler','API integration','Discord bot','Telegram bot','Trading/crypto bot','Email automation','Data pipeline','Web automation','Custom AI tool'] },
+      { id: 'language', label: 'Language', type: 'select',
+        opts: ['Python','Node.js','Go','Bash/Shell'] },
+      { id: 'deploy', label: 'Deployment', type: 'select',
+        opts: ['Local script','Docker container','Systemd service','SSH on host'] },
+      { id: 'extra', label: 'Extra requirements (optional)', type: 'text', placeholder: 'e.g. must be async, use sqlite...' },
+    ],
+    build: v => `Build a fully functional ${v.agent_type} autonomous agent in ${v.language}. Deploy as: ${v.deploy}.${v.extra ? ' Extra: '+v.extra+'.' : ''} Save all files to /work/. Include error handling, logging, and a README.`,
+  },
+  {
+    key: 'product_development',
+    icon: '💰',
+    label: 'High-ROI Product',
+    desc: 'Research + MVP plan for a profitable product',
+    fields: [
+      { id: 'niche', label: 'Niche / market', type: 'text', placeholder: 'e.g. AI tools for freelancers' },
+      { id: 'timeline', label: 'MVP timeline', type: 'select',
+        opts: ['1 week','2 weeks','1 month','3 months'] },
+      { id: 'revenue', label: 'Revenue model', type: 'select',
+        opts: ['SaaS subscription','One-time sale','Freemium + upsell','Service/agency','Affiliate/commission'] },
+      { id: 'budget', label: 'Infra budget/month', type: 'select',
+        opts: ['$0 (local only)','< $20','$20-$100','$100+'] },
+    ],
+    build: v => `Research and develop a high-ROI product in the "${v.niche}" market. Revenue model: ${v.revenue}. MVP in ${v.timeline}. Infra budget: ${v.budget}. Include: market sizing, top 3 competitors, MVP feature list, implementation plan, first-customer acquisition strategy.`,
+  },
+  {
+    key: 'research',
+    icon: '🔬',
+    label: 'Deep Research',
+    desc: 'Exhaustive research stored in Hermes memory',
+    fields: [
+      { id: 'topic', label: 'Topic', type: 'text', placeholder: 'e.g. LLM fine-tuning on consumer GPUs' },
+      { id: 'depth', label: 'Depth', type: 'select',
+        opts: ['Quick overview (15 min)','Deep dive (1 hour)','Exhaustive (multi-hour)'] },
+      { id: 'output', label: 'Output format', type: 'select',
+        opts: ['Executive summary','Technical writeup','Bullet action items','Comparison table','Code examples'] },
+    ],
+    build: v => `${v.depth} research on: ${v.topic}. Output format: ${v.output}. Store all key findings, facts, and actionable insights in Hermes memory for future reference.`,
+  },
+  {
+    key: 'security',
+    icon: '🔒',
+    label: 'Security Assessment',
+    desc: 'Authorized pentest or hardening audit',
+    fields: [
+      { id: 'target', label: 'Target / scope', type: 'text', placeholder: 'e.g. 192.168.1.0/24 or my Fedora host' },
+      { id: 'test_type', label: 'Assessment type', type: 'select',
+        opts: ['Recon & enumeration only','Vulnerability scan','Full pentest (exploit)','Code/config audit','System hardening'] },
+      { id: 'report', label: 'Report style', type: 'select',
+        opts: ['Executive summary','Technical report with PoC','Quick findings list'] },
+    ],
+    build: v => `Authorized security assessment. Target scope: ${v.target}. Type: ${v.test_type}. Produce: ${v.report}. Use Kali container with full toolset. Document all findings with CVSS scores and remediation steps.`,
+  },
+];
+
+let _sheetConfig = null;
+
+function openQuickSheet(key) {
+  _sheetConfig = QUICK_CONFIGS.find(c => c.key === key);
+  if (!_sheetConfig) return;
+  document.getElementById('sheet-title').textContent = _sheetConfig.icon + ' ' + _sheetConfig.label;
+  document.getElementById('sheet-subtitle').textContent = _sheetConfig.desc;
+  // Build fields
+  let html = '';
+  _sheetConfig.fields.forEach(f => {
+    html += `<div class="form-field"><label class="form-label">${esc(f.label)}</label>`;
+    if (f.type === 'select') {
+      html += `<select class="form-input" id="sf-${f.id}" onchange="rebuildObjective()">`;
+      f.opts.forEach(o => html += `<option>${esc(o)}</option>`);
+      html += `</select>`;
+    } else {
+      html += `<input class="form-input" id="sf-${f.id}" type="text" placeholder="${esc(f.placeholder||'')}" oninput="rebuildObjective()">`;
+    }
+    html += `</div>`;
+  });
+  document.getElementById('sheet-fields').innerHTML = html;
+  rebuildObjective();
+  document.getElementById('sheet').classList.add('open');
+  document.getElementById('sheet-overlay').classList.add('open');
+}
+
+function rebuildObjective() {
+  if (!_sheetConfig) return;
+  const vals = {};
+  _sheetConfig.fields.forEach(f => {
+    const el = document.getElementById('sf-' + f.id);
+    vals[f.id] = el ? el.value : '';
+  });
+  document.getElementById('sheet-objective').value = _sheetConfig.build(vals);
+}
+
+function closeSheet() {
+  document.getElementById('sheet').classList.remove('open');
+  document.getElementById('sheet-overlay').classList.remove('open');
+}
+
+async function sheetLaunch() {
+  const obj = document.getElementById('sheet-objective').value.trim();
+  if (!obj) { toast('Objective is empty'); return; }
+  const btn = document.getElementById('sheet-launch-btn');
+  btn.disabled = true; btn.textContent = '⏳ Launching…';
+  const res = await fetch(`${API}/api/flows/run`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ objective: obj, flow_type: _sheetConfig?.key || undefined }),
+  }).then(r=>r.json()).catch(e=>({error:e.message}));
+  btn.disabled = false; btn.textContent = '▶ Launch Flow';
+  closeSheet();
+  if (res.error) { toast('Error: ' + res.error); return; }
+  toast('Flow launched ✓');
+  setTimeout(() => { switchTab('flows'); loadFlows(); }, 600);
+}
+
+function populateQuickList() {
+  document.getElementById('quick-list').innerHTML = QUICK_CONFIGS.map(c => `
+    <div class="quick-card" onclick="openQuickSheet('${c.key}')">
+      <span class="quick-card-icon">${c.icon}</span>
+      <div class="quick-card-text">
+        <div class="quick-card-label">${esc(c.label)}</div>
+        <div class="quick-card-desc">${esc(c.desc)}</div>
+      </div>
+      <span class="quick-card-arrow">›</span>
+    </div>`).join('');
+}
+
+// ── TABS ──
+function switchTab(tab) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`page-${tab}`).classList.add('active');
+  document.getElementById(`nav-${tab}`)?.classList.add('active');
+  currentTab = tab;
+  if (tab === 'logs')     { unreadLogs = 0; updateLogBadge(); }
+  if (tab === 'memory')   loadMemoryStats();
+  if (tab === 'system')   loadSystemStats();
+  if (tab === 'flows')    loadFlows();
+  if (tab === 'terminal') termRefreshFlowList();
+}
+
+function goBack() {
+  document.getElementById('page-detail').classList.remove('active');
+  document.getElementById('page-flows').classList.add('active');
+  document.getElementById('nav-flows').classList.add('active');
+  currentTab = 'flows';
+  loadFlows();
+}
+
+// ── WS ──
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => {
+    document.getElementById('ws-pill').textContent = '● live';
+    document.getElementById('ws-pill').className = 'pill live';
+    document.getElementById('svc-ws').textContent = '✓ connected';
+    document.getElementById('svc-ws').style.color = 'var(--green)';
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-pill').textContent = '● offline';
+    document.getElementById('ws-pill').className = 'pill';
+    setTimeout(connectWS, 3000);
+  };
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'log') {
+      addLog(`[${(msg.flow_id||'').slice(0,6)}] ${msg.msg}`, msg.level || 'info');
+    } else if (msg.type === 'term_output') {
+      if (!termFlowId || termFlowId === msg.flow_id) {
+        termAppend(msg.output, msg.stream === 'stderr' ? 'err' : 'out');
+      }
+    } else if (msg.type === 'flow_start') {
+      addLog('Flow started', 'success'); loadFlows();
+    } else if (msg.type === 'flow_done') {
+      const ok = msg.status === 'finished';
+      addLog(`Flow ${(msg.flow_id||'').slice(0,6)} ${msg.status}`, ok ? 'success' : 'error');
+      toast(`Flow ${ok ? 'completed ✓' : 'failed ✗'}`);
+      loadFlows(); loadTokens();
+    }
+  };
+}
+
+// ── LOGS ──
+function addLog(msg, level='info') {
+  const ts = new Date().toTimeString().slice(0,8);
+  logs.push({ts, msg, level});
+  if (logs.length > 400) logs.shift();
+  if (currentTab !== 'logs') { unreadLogs++; updateLogBadge(); }
+  if (currentTab === 'logs') renderLogs();
+}
+function clearLogs() { logs = []; renderLogs(); }
+function setLogFilter(f, btn) {
+  logFilter = f;
+  document.querySelectorAll('.log-filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLogs();
+}
+function renderLogs() {
+  const filtered = logFilter === 'all' ? logs : logs.filter(l => l.level === logFilter);
+  const html = filtered.map(l =>
+    `<div class="log-line"><span class="log-ts">${l.ts}</span><span class="log-msg log-${l.level}">${esc(l.msg)}</span></div>`
+  ).join('');
+  document.getElementById('log-container').innerHTML = html || '<div style="color:var(--text2);padding:16px 0;font-size:13px">No logs</div>';
+  const c = document.getElementById('log-container');
+  c.scrollTop = c.scrollHeight;
+}
+function updateLogBadge() {
+  const el = document.getElementById('badge-logs');
+  if (unreadLogs > 0) { el.textContent = unreadLogs > 99 ? '99+' : unreadLogs; el.classList.remove('hidden'); }
+  else el.classList.add('hidden');
+}
+
+// ── FLOWS ──
+const TYPE_META = {
+  agent_development:  { emoji:'🤖', label:'Agent Dev',   color:'var(--purple)' },
+  product_development:{ emoji:'💰', label:'Product/ROI', color:'var(--orange)' },
+  research:           { emoji:'🔬', label:'Research',    color:'var(--accent)' },
+  security:           { emoji:'🔒', label:'Security',    color:'var(--red)'    },
+  general:            { emoji:'⚡', label:'General',     color:'var(--green)'  },
+};
+const AGENT_COLORS = {
+  primary_agent:'#58a6ff', coder:'#3fb950', architect:'#bc8cff',
+  monetizer:'#ffa657', researcher:'#58a6ff', pentester:'#f85149',
+  generator:'#d29922', refiner:'#d29922', adviser:'#3fb950',
+  reflector:'#8b949e', installer:'#3fb950'
+};
+
+async function loadFlows() {
+  const data = await fetch(`${API}/api/flows`).then(r=>r.json()).catch(()=>[]);
+  activeFlows = data;
+  const running = data.filter(f => f.status === 'running');
+  const badge = document.getElementById('badge-running');
+  if (running.length) { badge.textContent = running.length; badge.classList.remove('hidden'); }
+  else badge.classList.add('hidden');
+  renderFlowList(data);
+}
+
+function renderFlowList(data) {
+  const el = document.getElementById('flow-list-mobile');
+  if (!data.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">◎</div>
+      <div class="empty-title">No flows yet</div>
+      <div class="empty-desc">Use the Run tab to launch your first flow</div></div>`;
+    return;
+  }
+  el.innerHTML = data.slice(0,40).map(f => {
+    const tm = TYPE_META[f.flow_type] || TYPE_META.general;
+    const tasks = f.tasks?.length || 0;
+    const done  = f.tasks?.filter(t=>t.status==='finished').length || 0;
+    const tok   = allTokensByFlow[f.id];
+    const tokStr = tok?.total > 0 ? ` · ${fmtNum(tok.total)} tok` : '';
+    return `
+    <div class="card" onclick="openFlow('${f.id}')">
+      <div class="card-header">
+        <span style="font-size:22px">${tm.emoji}</span>
+        <div style="flex:1;min-width:0">
+          <div class="card-title">${esc((f.title||f.objective||'Untitled').slice(0,70))}</div>
+          <div class="card-sub">${f.id?.slice(0,8)} · ${tm.label}${tasks ? ' · '+done+'/'+tasks+' tasks' : ''}${tokStr}</div>
+        </div>
+        <span class="badge badge-${f.status}">${f.status==='running'?'<span class="dot-anim"></span> ':''}${f.status}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function openFlow(id) {
+  const flow = await fetch(`${API}/api/flows/${id}`).then(r=>r.json()).catch(()=>null);
+  if (!flow) return;
+  renderFlowDetail(flow);
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-detail').classList.add('active');
+}
+
+let _detailFlowId = null;
+let _detailRefreshTimer = null;
+
+function renderFlowDetail(flow) {
+  _detailFlowId = flow.id;
+  const tm = TYPE_META[flow.flow_type] || TYPE_META.general;
+  const dur = flow.finished_at
+    ? ((flow.finished_at - flow.created_at)/60).toFixed(1)+'m'
+    : 'running…';
+  const isRunning = flow.status === 'running';
+  const tok = allTokensByFlow[flow.id] || flow._tokens || {};
+
+  let html = `
+    <div class="flow-meta-row">
+      <span class="badge badge-${flow.status}">${isRunning?'<span class="dot-anim"></span> ':''}${flow.status}</span>
+      <span style="font-size:13px;color:${tm.color};font-weight:600">${tm.emoji} ${tm.label}</span>
+      <span style="font-size:12px;color:var(--text2)">⏱ ${dur}</span>
+      ${flow.hermes_items_stored ? `<span style="font-size:12px;color:var(--purple)">⬡ ${flow.hermes_items_stored}</span>` : ''}
+      ${flow.replan_count ? `<span style="font-size:12px;color:var(--yellow)">↻ ${flow.replan_count} replans</span>` : ''}
+    </div>
+    <div class="flow-objective">${esc(flow.objective||'')}</div>
+    ${tok.total > 0 ? `
+    <div class="tok-row">
+      <span class="tok-label">⬡ Tokens</span>
+      <span class="tok-chip tok-total">${fmtNum(tok.total)} total</span>
+      <span class="tok-chip tok-prompt">${fmtNum(tok.prompt||0)} in</span>
+      <span class="tok-chip tok-compl">${fmtNum(tok.completion||0)} out</span>
+      ${tok.calls > 0 ? `<span class="tok-chip tok-calls">${tok.calls} calls</span>` : ''}
+    </div>` : ''}`;
+
+  if (isRunning) {
+    html += `
+    <div class="flow-actions">
+      <button class="btn-stop" onclick="stopFlow('${flow.id}')">⬛ Stop Flow</button>
+    </div>
+    <div class="steer-panel">
+      <div class="steer-label">⚡ Steer Agents</div>
+      <div class="steer-row">
+        <input class="steer-input" id="steer-input-${flow.id}"
+               placeholder="e.g. focus on Python only, skip research…"
+               onkeydown="if(event.key==='Enter')steerFlow('${flow.id}')">
+        <button class="steer-btn" onclick="steerFlow('${flow.id}')">Send</button>
+      </div>
+    </div>`;
+  }
+
+  if (flow.replan_count > 0) {
+    html += `<div class="replan-banner">↻ Replanned ${flow.replan_count}× — agents adapted the task list</div>`;
+  }
+
+  if (!flow.tasks?.length) {
+    html += '<div style="color:var(--text2);font-size:13px;padding:16px 0">Agents are planning…</div>';
+  }
+
+  (flow.tasks||[]).forEach(t => {
+    const ac = AGENT_COLORS[t.agent]||'var(--accent)';
+    const sdone = t.subtasks?.filter(s=>s.status==='finished').length||0;
+    const stotal = t.subtasks?.length||0;
+    html += `
+    <div class="card" id="ftask-${t.id}">
+      <div class="card-header" onclick="toggleCard('ftask-${t.id}')">
+        <span class="agent-tag" style="background:${ac}22;color:${ac}">${t.agent}</span>
+        <div style="flex:1;min-width:0">
+          <div class="card-title">${esc(t.title)}</div>
+          ${stotal ? `<div class="card-sub">${sdone}/${stotal} subtasks</div>` : ''}
+        </div>
+        <span class="badge badge-${t.status}" style="flex-shrink:0">${t.status==='running'?'<span class="dot-anim"></span> ':''}${t.status}</span>
+        <span class="card-chevron">›</span>
+      </div>
+      <div class="card-body" style="display:none">
+        ${(t.subtasks||[]).map(s => renderSubtask(s)).join('')}
+        ${t.result ? `<div class="task-result">${esc(t.result.slice(0,600))}</div>` : ''}
+      </div>
+    </div>`;
+  });
+
+  // Capture which cards are currently open BEFORE replacing the DOM
+  const openCardIds = new Set();
+  document.querySelectorAll('#detail-content .card.open').forEach(c => openCardIds.add(c.id));
+
+  document.getElementById('detail-content').innerHTML = html;
+
+  // Restore open state for any cards that were open before the refresh
+  openCardIds.forEach(id => {
+    const card = document.getElementById(id);
+    if (!card) return;
+    card.classList.add('open');
+    const body = card.querySelector('.card-body');
+    if (body) body.style.display = 'block';
+  });
+
+  // Auto-refresh detail while running — only start timer once per flow
+  clearInterval(_detailRefreshTimer);
+  if (isRunning) {
+    _detailRefreshTimer = setInterval(async () => {
+      if (_detailFlowId !== flow.id) { clearInterval(_detailRefreshTimer); return; }
+      await loadTokens();
+      const updated = await fetch(`${API}/api/flows/${flow.id}`).then(r=>r.json()).catch(()=>null);
+      if (updated) renderFlowDetail(updated);
+      if (updated?.status !== 'running') clearInterval(_detailRefreshTimer);
+    }, 4000);
+  }
+}
+
+function renderSubtask(s) {
+  const icons = {finished:'✓', failed:'✗', running:'●', created:'○', retrying:'↻'};
+  const icols = {finished:'var(--green)', failed:'var(--red)', running:'var(--accent)',
+                 created:'var(--text2)', retrying:'var(--yellow)'};
+  const ac = AGENT_COLORS[s.agent]||'var(--purple)';
+  const retryBadge = s.attempts > 1
+    ? `<span class="retry-badge">↻ attempt ${s.attempts}</span>` : '';
+  return `
+  <div class="subtask">
+    <span class="subtask-status" style="color:${icols[s.status]||'var(--text2)'}">${icons[s.status]||'○'}</span>
+    <div class="subtask-body">
+      <div class="subtask-title">${esc(s.title)}${retryBadge}</div>
+      <div class="subtask-agent" style="color:${ac}">${s.agent}</div>
+      ${s.result ? `<div class="subtask-result">${esc(s.result.slice(0,400))}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function stopFlow(id) {
+  const res = await fetch(`${API}/api/flows/${id}/stop`, {method:'POST'}).then(r=>r.json()).catch(()=>null);
+  if (res?.ok) toast('Stop signal sent — flow will halt after current subtask');
+}
+
+async function steerFlow(id) {
+  const inp = document.getElementById(`steer-input-${id}`);
+  if (!inp) return;
+  const msg = inp.value.trim();
+  if (!msg) { toast('Enter a steering instruction'); return; }
+  inp.value = '';
+  const res = await fetch(`${API}/api/flows/${id}/steer`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({message: msg}),
+  }).then(r=>r.json()).catch(()=>null);
+  if (res?.ok) toast('Steering injected — agents will adapt on next task');
+}
+
+function toggleCard(id) {
+  const card = document.getElementById(id);
+  if (!card) return;
+  const body = card.querySelector('.card-body');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  card.classList.toggle('open', !open);
+}
+
+// ── RUN ──
+function selectType(btn) {
+  document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  selectedType = btn.dataset.type;
+}
+async function startFlow() {
+  const obj = document.getElementById('run-objective').value.trim();
+  if (!obj) { toast('Enter an objective first'); return; }
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true; btn.textContent = '⏳ Launching…';
+  const res = await fetch(`${API}/api/flows/run`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({objective: obj, flow_type: selectedType || undefined}),
+  }).then(r=>r.json()).catch(e=>({error:e.message}));
+  btn.disabled = false; btn.textContent = '▶ Launch Flow';
+  if (res.error) { toast('Error: ' + res.error); return; }
+  document.getElementById('run-objective').value = '';
+  toast('Flow launched ✓');
+  setTimeout(() => { switchTab('flows'); loadFlows(); }, 600);
+}
+
+// ── TERMINAL ──
+function termRefreshFlowList() {
+  const sel = document.getElementById('term-flow-select');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— host shell (no container) —</option>';
+  activeFlows.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f.id;
+    opt.textContent = `[${f.id.slice(0,8)}] ${(f.title||'').slice(0,40)} (${f.status})`;
+    sel.appendChild(opt);
+  });
+  if (prev) sel.value = prev;
+}
+function termSwitchFlow(id) {
+  termFlowId = id;
+  termAppend(`Switched to ${id ? 'flow '+id.slice(0,8) : 'host shell'}`, 'sys');
+}
+function termAppend(text, cls='out') {
+  termLines.push({text, cls});
+  if (termLines.length > 500) termLines.shift();
+  const screen = document.getElementById('term-screen');
+  const div = document.createElement('div');
+  div.className = 'term-line ' + cls;
+  div.textContent = text;
+  screen.appendChild(div);
+  screen.scrollTop = screen.scrollHeight;
+}
+function termClear() {
+  termLines = [];
+  document.getElementById('term-screen').innerHTML = '<div class="term-line sys">Terminal cleared</div>';
+}
+async function termExec() {
+  const inp = document.getElementById('term-input');
+  const cmd = inp.value.trim();
+  if (!cmd) return;
+  inp.value = '';
+  termAppend('$ ' + cmd, 'cmd');
+  const res = await fetch(`${API}/api/terminal/exec`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ cmd, flow_id: termFlowId || null }),
+  }).then(r=>r.json()).catch(e=>({error:e.message, exit_code:-1}));
+  if (res.error && !res.stdout && !res.stderr) {
+    termAppend('Error: ' + res.error, 'err');
+    return;
+  }
+  if (res.stdout) termAppend(res.stdout, res.exit_code === 0 ? 'out' : 'out');
+  if (res.stderr) termAppend(res.stderr, 'err');
+  if (res.exit_code !== 0) termAppend(`[exit ${res.exit_code}]`, 'err');
+}
+
+// ── MEMORY ──
+async function loadMemoryStats() {
+  const stats = await fetch(`${API}/api/memory/stats`).then(r=>r.json()).catch(()=>null);
+  if (stats) {
+    document.getElementById('m-beliefs').textContent  = fmtNum(stats.beliefs);
+    document.getElementById('m-memories').textContent = fmtNum(stats.memories);
+    document.getElementById('m-goals').textContent    = fmtNum(stats.goals);
+  }
+  const goals = await fetch(`${API}/api/memory/goals`).then(r=>r.json()).catch(()=>[]);
+  document.getElementById('goals-list').innerHTML = goals.slice(0,8).map(g => `
+    <div class="goal-item">
+      <div>${esc(g.title)}</div>
+      <div class="priority">priority ${g.priority?.toFixed(2)||'—'}</div>
+    </div>`).join('') || '<div style="color:var(--text2);font-size:13px">No goals</div>';
+}
+async function searchMemory() {
+  const q = document.getElementById('mem-search').value.trim();
+  if (!q) return;
+  const results = await fetch(`${API}/api/memory/search?q=${encodeURIComponent(q)}`).then(r=>r.json()).catch(()=>[]);
+  const el = document.getElementById('mem-results');
+  if (!results.length) {
+    el.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:16px 0">No results</div>';
+    return;
+  }
+  el.innerHTML = results.map(r => `
+    <div class="memory-item">
+      <div class="memory-type" style="color:${r.type==='belief'?'var(--purple)':'var(--accent)'}">${r.type}</div>
+      <div class="memory-content">${esc((r.content||'').slice(0,250))}</div>
+      ${r.confidence!=null ? `<div class="memory-conf">confidence: ${(r.confidence*100).toFixed(0)}%</div>` : ''}
+    </div>`).join('');
+}
+
+// ── SYSTEM ──
+function fmtDuration(seconds) {
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds/3600)}h ${Math.floor((seconds%3600)/60)}m`;
+  return `${Math.floor(seconds/86400)}d ${Math.floor((seconds%86400)/3600)}h`;
+}
+
+async function loadTokens() {
+  const data = await fetch(`${API}/api/tokens`).then(r=>r.json()).catch(()=>({}));
+  allTokensByFlow = data._flows || data;  // backwards compat if server not restarted yet
+  const sess = data._session || {};
+  const at   = data._alltime || {};
+
+  // Session totals (for pill and detail page)
+  allTokens = {
+    prompt: sess.prompt||0, completion: sess.completion||0,
+    calls: sess.calls||0, total: sess.total||0
+  };
+  document.getElementById('tok-pill').textContent = fmtNum(allTokens.total)+' tok';
+}
+
+async function loadSystemStats() {
+  const info = await fetch(`${API}/api/system/info`).then(r=>r.json()).catch(()=>({}));
+  if (info.os)  document.getElementById('hw-os').textContent  = info.os;
+  if (info.cpu) document.getElementById('hw-cpu').textContent = info.cpu;
+  if (info.ram) document.getElementById('hw-ram').textContent = info.ram;
+  if (info.gpu) document.getElementById('hw-gpu').textContent = info.gpu;
+  if (info.ssh_host) {
+    document.getElementById('ssh-info').textContent =
+      `key: ${info.ssh_key}\nhost: ${info.ssh_user}@${info.ssh_host}`;
+  }
+
+  const data = await fetch(`${API}/api/tokens`).then(r=>r.json()).catch(()=>({}));
+  allTokensByFlow = data._flows || data;
+  const sess = data._session || {};
+  const at   = data._alltime || {};
+  allTokens = {
+    prompt: sess.prompt||0, completion: sess.completion||0,
+    calls: sess.calls||0, total: sess.total||0
+  };
+  document.getElementById('tok-pill').textContent = fmtNum(allTokens.total)+' tok';
+
+  // Session card
+  const since = sess.since ? `— ${fmtDuration((Date.now()/1000) - sess.since)} ago` : '';
+  document.getElementById('tok-session-since').textContent = since;
+  document.getElementById('tok-total').textContent  = fmtNum(sess.total||0);
+  document.getElementById('tok-prompt').textContent = fmtNum(sess.prompt||0);
+  document.getElementById('tok-compl').textContent  = fmtNum(sess.completion||0);
+  document.getElementById('tok-calls').textContent  = sess.calls||0;
+
+  // All-time card
+  document.getElementById('tok-all-total').textContent  = fmtNum(at.total||0);
+  document.getElementById('tok-all-prompt').textContent = fmtNum(at.prompt||0);
+  document.getElementById('tok-all-compl').textContent  = fmtNum(at.completion||0);
+  document.getElementById('tok-all-calls').textContent  = at.calls||0;
+
+  // Per-flow list — sort by total desc
+  const flows = Object.entries(allTokensByFlow)
+    .map(([id, t]) => ({id, ...t}))
+    .filter(t => (t.total||0) > 0)
+    .sort((a,b) => (b.total||0) - (a.total||0));
+  const el = document.getElementById('tok-per-flow');
+  if (!flows.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:6px 0">No flow token data yet</div>';
+  } else {
+    el.innerHTML = flows.map(t => `
+      <div class="tok-flow-row">
+        <span class="tok-flow-name">${t.id.slice(0,8)}</span>
+        <span class="tok-flow-val">${fmtNum(t.total||0)}</span>
+        <span class="tok-flow-sub">${fmtNum(t.prompt||0)} in · ${fmtNum(t.completion||0)} out · ${t.calls||0} calls</span>
+      </div>`).join('');
+  }
+
+  const status = await fetch(`${API}/api/status`).then(r=>r.json()).catch(()=>null);
+  if (status) {
+    const oe = document.getElementById('svc-ollama');
+    oe.textContent = status.ollama.ok ? `✓ running (${status.ollama.models} models)` : '✗ unreachable';
+    oe.style.color = status.ollama.ok ? 'var(--green)' : 'var(--red)';
+    const he = document.getElementById('svc-hermes');
+    he.textContent = status.hermes.ok ? '✓ connected' : '✗ unreachable';
+    he.style.color = status.hermes.ok ? 'var(--green)' : 'var(--red)';
+  }
+}
+
+async function resetTokens() {
+  await fetch(`${API}/api/tokens/reset`, {method:'POST'});
+  toast('Session token counter reset');
+  loadSystemStats();
+}
+
+// ── TOAST ──
+let _toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── UTILS ──
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmtNum(n) {
+  if (!n) return '0';
+  if (n>=1000000) return (n/1000000).toFixed(1)+'M';
+  if (n>=1000) return (n/1000).toFixed(1)+'k';
+  return String(n);
+}
+
+// ── INIT ──
+connectWS();
+loadFlows();
+loadTokens();
+populateQuickList();
+setInterval(loadFlows, 10000);
+setInterval(loadTokens, 6000);
+</script>
+</body>
+</html>
