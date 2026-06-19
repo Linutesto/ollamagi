@@ -63,10 +63,12 @@ _COMMON_PACKAGES = (
 def _bootstrap_python(container, container_type: str):
     if container_type == "pentest":
         return  # Kali has its own package management
-    # Install uv first (fast package manager agents expect from host Hermes beliefs),
-    # then common packages. Runs detached so it doesn't block container startup.
+    # Generic/debian containers don't have python3 by default — install it first.
+    # python:latest already has it, so this is a no-op there.
+    pre = "apt-get install -y -qq python3 python3-pip curl 2>/dev/null || true && "
     container.exec_run(
         ["bash", "-c",
+         pre +
          "python3 -m pip install -q --upgrade pip 2>/dev/null && "
          f"python3 -m pip install -q --prefer-binary {_COMMON_PACKAGES} 2>/dev/null && "
          "curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null && "

@@ -417,9 +417,11 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
     else:
         script_prompt = (
             f"Write a bash script for this subtask:\n{subtask.description}\n"
-            "Environment: Linux container. pip3 and python3 are available. "
-            "uv is at /usr/local/bin/uv if needed. apt-get is available.\n"
-            "Do NOT use heredocs. Do NOT embed Python code inline.\n"
+            "Environment: Debian Linux container with apt-get. "
+            "python3 and pip3 may not be pre-installed — if you need them, add: "
+            "apt-get install -y -qq python3 python3-pip 2>/dev/null || true\n"
+            "Do NOT use heredocs. Do NOT embed Python code inline in bash.\n"
+            "Do NOT assume any tool is available — install what you need via apt-get.\n"
             "Save all outputs to /work/. Return ONLY the bash script, no markdown."
         )
         messages = history + [{"role": "user", "content": script_prompt}]
