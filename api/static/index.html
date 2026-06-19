@@ -375,6 +375,34 @@ select.form-input { cursor: pointer; }
 .file-code code { font-family: 'Courier New', monospace !important; }
 .file-binary { padding: 20px; text-align: center; color: var(--text2); font-size: 13px;
                background: var(--bg3); border-radius: 8px; }
+
+/* LLM CALL CARDS */
+.llm-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 5px; overflow: hidden; }
+.llm-card-hdr { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+                cursor: pointer; user-select: none; background: var(--bg3); }
+.llm-card-hdr:active { background: #1a2030; }
+.llm-badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 10px;
+             background: #1e2d3a; color: var(--accent); flex-shrink: 0; }
+.llm-badge.llm-coder { background: #1a2d1a; color: var(--green); }
+.llm-badge.llm-orchestrator { background: #2a1a3a; color: var(--purple); }
+.llm-badge.llm-fast { background: #3a2a1a; color: var(--orange); }
+.llm-title { flex: 1; font-size: 12px; font-family: monospace; color: var(--text2);
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.llm-tok { font-size: 10px; color: var(--text2); flex-shrink: 0; }
+.llm-chevron { font-size: 12px; color: var(--text2); flex-shrink: 0; transition: transform 0.15s; }
+.llm-card.open .llm-chevron { transform: rotate(90deg); }
+.llm-body { border-top: 1px solid var(--border); display: none; }
+.llm-card.open .llm-body { display: block; }
+.llm-msg { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.llm-msg:last-child { border-bottom: none; }
+.llm-role { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+            margin-bottom: 3px; }
+.llm-role.system { color: var(--yellow); }
+.llm-role.user   { color: var(--accent); }
+.llm-role.assistant { color: var(--green); }
+.llm-content { font-family: 'Courier New', monospace; font-size: 11.5px; color: var(--text);
+               white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+               max-height: 350px; overflow-y: auto; background: var(--bg); padding: 6px 8px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -784,22 +812,11 @@ function connectWS() {
       addLog(`[${(msg.flow_id||'').slice(0,6)}] ${msg.msg}`, msg.level || 'info');
       // Stream into transcript panel if it's open for this flow
       if (msg.flow_id && _transcriptLoaded === msg.flow_id) {
-        const liveEl  = document.getElementById(`tlog-live-${msg.flow_id}`);
-        const scrollEl = document.getElementById(`tlog-scroll-${msg.flow_id}`);
-        const countEl  = document.getElementById(`tlog-count-${msg.flow_id}`);
-        const liveInd  = document.getElementById(`tlog-live-ind-${msg.flow_id}`);
-        if (liveEl) {
-          liveEl.insertAdjacentHTML('beforeend', renderTlogLine(msg));
-          if (liveInd) liveInd.style.display = '';
-          if (countEl) {
-            const n = parseInt(countEl.textContent.match(/\d+/)?.[0] || '0') + 1;
-            countEl.textContent = `(${n} entries)`;
-          }
-          if (scrollEl) {
-            const nearBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 100;
-            if (nearBottom) scrollEl.scrollTop = scrollEl.scrollHeight;
-          }
-        }
+        _appendTranscriptEvent(msg);
+      }
+    } else if (msg.type === 'llm_call') {
+      if (msg.flow_id && _transcriptLoaded === msg.flow_id) {
+        _appendTranscriptEvent(msg);
       }
     } else if (msg.type === 'term_output') {
       if (!termFlowId || termFlowId === msg.flow_id) {
@@ -1372,75 +1389,165 @@ function renderTlogLine(l) {
   return `<div class="tlog-line"><span class="tlog-ts">${fmtTime(l.ts)}</span><span class="tlog-msg ${cls}">${esc(l.msg)}</span></div>`;
 }
 
+let _llmCardSeq = 0;
+function renderLlmCard(e) {
+  const id = 'llmc-' + (++_llmCardSeq);
+  const typeClass = 'llm-' + (e.task_type || 'orchestrator');
+  const tok = e.prompt_tokens || e.completion_tokens
+    ? `${fmtNum(e.prompt_tokens||0)}↑ ${fmtNum(e.completion_tokens||0)}↓` : '';
+  // Build first user/last user message snippet for the header
+  const msgs = e.messages || [];
+  const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+  const snippet = (lastUser?.content || '').slice(0, 80).replace(/\n/g, ' ');
+
+  let bodyHtml = '';
+  msgs.forEach(m => {
+    const roleCls = m.role === 'system' ? 'system' : m.role === 'user' ? 'user' : 'assistant';
+    bodyHtml += `<div class="llm-msg">
+      <div class="llm-role ${roleCls}">${m.role}</div>
+      <div class="llm-content">${esc(m.content || '')}</div>
+    </div>`;
+  });
+  if (e.response) {
+    bodyHtml += `<div class="llm-msg">
+      <div class="llm-role assistant">assistant</div>
+      <div class="llm-content">${esc(e.response)}</div>
+    </div>`;
+  }
+
+  return `<div class="llm-card" id="${id}">
+    <div class="llm-card-hdr" onclick="toggleLlmCard('${id}')">
+      <span class="llm-badge ${typeClass}">${esc(e.task_type||'llm')}</span>
+      <span class="llm-title">#${e.n||'?'} ${esc(snippet)}</span>
+      <span class="llm-tok">${tok}</span>
+      <span class="llm-chevron">›</span>
+    </div>
+    <div class="llm-body">${bodyHtml}</div>
+  </div>`;
+}
+
+function toggleLlmCard(id) {
+  const card = document.getElementById(id);
+  if (card) card.classList.toggle('open');
+}
+
+function _transcriptScrollEl(flowId) {
+  return document.getElementById(`tlog-scroll-${flowId}`);
+}
+
+function _appendTranscriptEvent(entry) {
+  const flowId = entry.flow_id;
+  const liveEl   = document.getElementById(`tlog-live-${flowId}`);
+  const scrollEl = _transcriptScrollEl(flowId);
+  const countEl  = document.getElementById(`tlog-count-${flowId}`);
+  const liveInd  = document.getElementById(`tlog-live-ind-${flowId}`);
+  if (!liveEl) return;
+
+  const html = entry.type === 'llm_call' ? renderLlmCard(entry) : renderTlogLine(entry);
+  liveEl.insertAdjacentHTML('beforeend', html);
+  if (liveInd) liveInd.style.display = '';
+  if (countEl && entry.type !== 'llm_call') {
+    const n = parseInt(countEl.textContent.match(/\d+/)?.[0] || '0') + 1;
+    countEl.textContent = `(${n} entries)`;
+  }
+  if (scrollEl) {
+    const nearBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 120;
+    if (nearBottom) scrollEl.scrollTop = scrollEl.scrollHeight;
+  }
+}
+
+function _buildEventStreamSkeleton(flowId) {
+  return `<div class="transcript-section">
+    <div class="transcript-section-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Live Event Stream <span id="tlog-count-${flowId}">(loading…)</span></span>
+      <span id="tlog-live-ind-${flowId}" style="font-size:10px;color:var(--green);font-weight:700;display:none">● LIVE</span>
+    </div>
+    <div id="tlog-scroll-${flowId}" style="max-height:500px;overflow-y:auto">
+      <div id="tlog-hist-${flowId}"><div style="color:var(--text2);font-size:12px;padding:8px 0">Loading history…</div></div>
+      <div id="tlog-live-${flowId}"></div>
+    </div>
+  </div>
+  <div id="tlog-tasks-${flowId}"></div>`;
+}
+
 async function loadTranscript(flowId) {
   _transcriptLoaded = flowId;
   const body = document.getElementById(`transcript-body-${flowId}`);
   if (!body) return;
+
+  // Create the live-append target IMMEDIATELY so WS events during fetch aren't lost
+  body.innerHTML = _buildEventStreamSkeleton(flowId);
+
   const data = await fetch(`${API}/api/flows/${flowId}/transcript`).then(r=>r.json()).catch(()=>null);
-  if (!data) { body.innerHTML = '<div style="color:var(--red)">Failed to load transcript</div>'; return; }
-  body.innerHTML = buildTranscriptHtml(data, flowId);
-  // Scroll log to bottom (most recent at end)
-  const scrollEl = document.getElementById(`tlog-scroll-${flowId}`);
+
+  // Populate historical events
+  const histEl  = document.getElementById(`tlog-hist-${flowId}`);
+  const countEl = document.getElementById(`tlog-count-${flowId}`);
+  const scrollEl = _transcriptScrollEl(flowId);
+  const tasksEl = document.getElementById(`tlog-tasks-${flowId}`);
+
+  if (!data) {
+    if (histEl) histEl.innerHTML = '<div style="color:var(--red)">Failed to load transcript</div>';
+    return;
+  }
+
+  const events = data.events || [];
+  const logCount = events.filter(e => e.type !== 'llm_call').length;
+
+  if (histEl) {
+    if (!events.length) {
+      histEl.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">No events yet — start a flow to see live output</div>';
+    } else {
+      histEl.innerHTML = events.map(e => e.type === 'llm_call' ? renderLlmCard(e) : renderTlogLine(e)).join('');
+    }
+  }
+  if (countEl) countEl.textContent = `(${logCount} log + ${events.length - logCount} LLM calls)`;
+
+  // Task results section
+  if (tasksEl && data.tasks?.length) {
+    tasksEl.innerHTML = buildTaskResultsHtml(data.tasks);
+    tasksEl.querySelectorAll('.transcript-task-hdr').forEach(hdr => {
+      hdr.onclick = () => {
+        const b = hdr.nextElementSibling;
+        if (b) b.style.display = b.style.display === 'none' ? '' : 'none';
+      };
+    });
+  }
+
+  // Scroll to bottom (most recent)
   if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-  // Re-attach toggle listeners for task blocks
-  body.querySelectorAll('.transcript-task-hdr').forEach(hdr => {
-    hdr.onclick = () => {
-      const b = hdr.nextElementSibling;
-      if (b) b.style.display = b.style.display === 'none' ? '' : 'none';
-    };
-  });
 }
 
-function buildTranscriptHtml(data, flowId) {
-  let h = '';
-  const logCount = data.logs?.length || 0;
-  // Log section — scrollable with separate live-append target
-  h += `<div class="transcript-section">
-    <div class="transcript-section-title" style="display:flex;align-items:center;justify-content:space-between">
-      <span>Event Log <span id="tlog-count-${flowId}">(${logCount} entries)</span></span>
-      <span id="tlog-live-ind-${flowId}" style="font-size:10px;color:var(--green);font-weight:700;display:none">● LIVE</span>
-    </div>
-    <div id="tlog-scroll-${flowId}" style="max-height:420px;overflow-y:auto">
-      <div id="tlog-hist-${flowId}">`;
-  if (!logCount) {
-    h += '<div style="color:var(--text2);font-size:12px;padding:8px 0">No log entries yet</div>';
-  } else {
-    (data.logs||[]).forEach(l => { h += renderTlogLine(l); });
-  }
-  h += `</div><div id="tlog-live-${flowId}"></div></div></div>`;
-
-  // Task results section (full, untruncated)
-  if (data.tasks?.length) {
-    h += `<div class="transcript-section">
-      <div class="transcript-section-title">Task Results (full, untruncated)</div>`;
-    data.tasks.forEach(t => {
-      const statusColor = {finished:'var(--green)',failed:'var(--red)',running:'var(--accent)'}[t.status] || 'var(--text2)';
-      const ac = AGENT_COLORS[t.agent] || 'var(--accent)';
-      h += `<div class="transcript-task">
-        <div class="transcript-task-hdr">
-          <span class="agent-tag" style="background:${ac}22;color:${ac};font-size:11px">${esc(t.agent)}</span>
-          <span style="flex:1;font-size:13px;font-weight:600;min-width:0">${esc(t.title)}</span>
-          <span style="font-size:11px;color:${statusColor};font-weight:700;flex-shrink:0">${t.status}</span>
-        </div>
-        <div class="transcript-task-body">`;
-      (t.subtasks||[]).forEach(s => {
-        const si = {finished:'✓',failed:'✗',running:'●',retrying:'↻',superseded:'↪',created:'○'}[s.status]||'○';
-        const sc = {finished:'var(--green)',failed:'var(--red)',running:'var(--accent)',retrying:'var(--yellow)'}[s.status]||'var(--text2)';
-        h += `<div class="transcript-subtask">
-          <div class="transcript-subtask-title">
-            <span style="color:${sc};margin-right:6px">${si}</span>${esc(s.title)}
-            ${s.attempts > 1 ? `<span class="retry-badge">↻ ${s.attempts}×</span>` : ''}
-          </div>`;
-        if (s.result) h += `<div class="transcript-result">${esc(s.result)}</div>`;
-        h += `</div>`;
-      });
-      if (t.result) {
-        h += `<div class="transcript-subtask"><div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:5px">TASK SUMMARY</div><div class="transcript-result">${esc(t.result)}</div></div>`;
-      }
-      h += `</div></div>`;
+function buildTaskResultsHtml(tasks) {
+  let h = `<div class="transcript-section">
+    <div class="transcript-section-title">Task Results (full, untruncated)</div>`;
+  tasks.forEach(t => {
+    const statusColor = {finished:'var(--green)',failed:'var(--red)',running:'var(--accent)'}[t.status] || 'var(--text2)';
+    const ac = AGENT_COLORS[t.agent] || 'var(--accent)';
+    h += `<div class="transcript-task">
+      <div class="transcript-task-hdr">
+        <span class="agent-tag" style="background:${ac}22;color:${ac};font-size:11px">${esc(t.agent)}</span>
+        <span style="flex:1;font-size:13px;font-weight:600;min-width:0">${esc(t.title)}</span>
+        <span style="font-size:11px;color:${statusColor};font-weight:700;flex-shrink:0">${t.status}</span>
+      </div>
+      <div class="transcript-task-body">`;
+    (t.subtasks||[]).forEach(s => {
+      const si = {finished:'✓',failed:'✗',running:'●',retrying:'↻',superseded:'↪',created:'○'}[s.status]||'○';
+      const sc = {finished:'var(--green)',failed:'var(--red)',running:'var(--accent)',retrying:'var(--yellow)'}[s.status]||'var(--text2)';
+      h += `<div class="transcript-subtask">
+        <div class="transcript-subtask-title">
+          <span style="color:${sc};margin-right:6px">${si}</span>${esc(s.title)}
+          ${s.attempts > 1 ? `<span class="retry-badge">↻ ${s.attempts}×</span>` : ''}
+        </div>`;
+      if (s.result) h += `<div class="transcript-result">${esc(s.result)}</div>`;
+      h += `</div>`;
     });
-    h += `</div>`;
-  }
+    if (t.result) {
+      h += `<div class="transcript-subtask"><div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:5px">TASK SUMMARY</div><div class="transcript-result">${esc(t.result)}</div></div>`;
+    }
+    h += `</div></div>`;
+  });
+  h += `</div>`;
   return h;
 }
 

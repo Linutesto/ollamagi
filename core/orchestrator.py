@@ -16,7 +16,7 @@ from pathlib import Path
 from core.config import WORKSPACE_DIR, MAX_TASK_TIMEOUT
 from core.agents import run_agent, FLOW_TYPE_ROLES, normalize_role_name
 from core.memory_bridge import context_for_task, store_belief
-from core.model_router import chat, get_tokens, cancel_flow, register_stop_event, FlowStoppedException, interruptible_sleep
+from core.model_router import chat, get_tokens, cancel_flow, register_stop_event, register_llm_callback, FlowStoppedException, interruptible_sleep
 from executor.docker_manager import create_container, exec_script, exec_python, stop_container, sync_workspace
 from memory.extractor import extract_and_store
 
@@ -144,28 +144,36 @@ def _log(flow_id: str, msg: str, level: str = "info"):
         pass
 
 
-def get_flow_transcript(flow_id: str) -> dict | None:
-    """Return full untruncated flow data + log lines for the transcript viewer."""
-    flow = _flows.get(flow_id)
+def _read_jsonl(path: Path) -> list[dict]:
+    entries = []
+    if not path.exists():
+        return entries
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return entries
 
-    # Build log lines from disk (covers restarted server sessions too)
-    logs: list[dict] = []
-    log_path = WORKSPACE_DIR / flow_id / "flow_log.jsonl"
-    if log_path.exists():
-        try:
-            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if line:
-                    try:
-                        logs.append(json.loads(line))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+
+def get_flow_transcript(flow_id: str) -> dict | None:
+    """Return full untruncated flow data + unified event timeline for the transcript viewer."""
+    flow = _flows.get(flow_id)
+    work_dir = WORKSPACE_DIR / flow_id
+
+    # Merge log lines + LLM call records into a single timeline sorted by ts
+    log_entries = _read_jsonl(work_dir / "flow_log.jsonl")
+    llm_entries = _read_jsonl(work_dir / "llm_calls.jsonl")
+    events = sorted(log_entries + llm_entries, key=lambda e: e.get("ts", 0))
 
     if flow is None:
-        # Flow not in memory (server restarted) — return logs only
-        return {"flow_id": flow_id, "logs": logs, "tasks": []}
+        # Flow not in memory (server restarted) — return events only
+        return {"flow_id": flow_id, "events": events, "tasks": []}
 
     def _full_subtask(s: Subtask) -> dict:
         return {
@@ -191,7 +199,7 @@ def get_flow_transcript(flow_id: str) -> dict | None:
         "title": flow.title,
         "objective": flow.objective,
         "status": flow.status,
-        "logs": logs,
+        "events": events,
         "tasks": [_full_task(t) for t in flow.tasks],
     }
 
@@ -1982,6 +1990,28 @@ def run_flow(objective: str, flow_type: str | None = None,
         _log(flow_id, msg, level)
         if broadcast:
             broadcast({"type": "log", "flow_id": flow_id, "msg": msg, "level": level})
+
+    def _on_llm_call(entry: dict):
+        # Write full entry (including messages) to llm_calls.jsonl
+        try:
+            llm_log_path = WORKSPACE_DIR / flow_id / "llm_calls.jsonl"
+            with llm_log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
+        # Broadcast a lightweight version via WS (truncate messages/response for network)
+        if broadcast:
+            ws_entry = {
+                **entry,
+                "messages": [
+                    {**m, "content": m.get("content", "")[:600]}
+                    for m in (entry.get("messages") or [])
+                ],
+                "response": (entry.get("response") or "")[:8000],
+            }
+            broadcast(ws_entry)
+
+    register_llm_callback(flow_id, _on_llm_call)
 
     def _mark_stopped():
         flow.status = "stopped"
