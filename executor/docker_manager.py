@@ -2,7 +2,9 @@
 import docker
 import io
 import os
+import queue
 import tarfile
+import threading
 import time
 from pathlib import Path
 from core.config import (
@@ -57,25 +59,33 @@ def create_container(flow_id: str, task_id: str, container_type: str = "python")
 # Common packages pre-installed so agents don't need to pip-install basics every run
 _COMMON_PACKAGES = (
     "uv requests httpx aiohttp python-dotenv rich colorama "
-    "beautifulsoup4 lxml pyyaml toml psutil"
+    "beautifulsoup4 lxml pyyaml toml psutil loguru selenium webdriver-manager"
 )
 
 def _bootstrap_python(container, container_type: str):
     if container_type == "pentest":
         return  # Kali has its own package management
-    # Generic/debian containers don't have python3 by default — install it first.
-    # python:latest already has it, so this is a no-op there.
-    pre = "apt-get install -y -qq python3 python3-pip curl 2>/dev/null || true && "
-    container.exec_run(
-        ["bash", "-c",
-         pre +
-         "python3 -m pip install -q --upgrade pip 2>/dev/null && "
-         f"python3 -m pip install -q --prefer-binary {_COMMON_PACKAGES} 2>/dev/null && "
-         "curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null && "
-         "ln -sf /root/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true"],
-        user="root",
-        detach=True,
+    # Bootstrap must finish before generated code starts. The old detached setup
+    # raced the task and regularly produced "python3: command not found".
+    if container_type == "generic":
+        command = (
+            "if ! command -v python3 >/dev/null 2>&1; then "
+            "export DEBIAN_FRONTEND=noninteractive; "
+            "apt-get update -qq && "
+            "apt-get install -y -qq python3 python3-pip ca-certificates curl; "
+            "fi; command -v python3"
+        )
+    else:
+        command = (
+            "command -v python3 && "
+            f"python3 -m pip install -q --disable-pip-version-check --prefer-binary {_COMMON_PACKAGES}"
+        )
+
+    exit_code, output = _exec_with_timeout(
+        container, ["bash", "-c", command], timeout=240, user="root"
     )
+    if exit_code != 0:
+        raise RuntimeError(f"container bootstrap failed (exit {exit_code}): {output[-1200:]}")
 
 
 def _inject_ssh(container) -> bool:
@@ -132,19 +142,55 @@ def _python_tar(code: str) -> bytes:
     return buf.read()
 
 
+def _exec_with_timeout(container, command: list[str], timeout: int, user: str | None = None) -> tuple[int, str]:
+    """Run a Docker exec with a real wall-clock timeout."""
+    result_q: queue.Queue = queue.Queue(maxsize=1)
+
+    def worker():
+        try:
+            kwargs = {"stream": False, "demux": False}
+            if user:
+                kwargs["user"] = user
+            result_q.put(("ok", container.exec_run(command, **kwargs)))
+        except BaseException as exc:
+            result_q.put(("error", exc))
+
+    threading.Thread(target=worker, daemon=True).start()
+    try:
+        kind, value = result_q.get(timeout=max(1, timeout))
+    except queue.Empty:
+        try:
+            container.kill()
+        except Exception:
+            pass
+        return 124, f"Command timed out after {timeout} seconds"
+
+    if kind == "error":
+        raise value
+    output = value.output.decode("utf-8", errors="replace") if value.output else ""
+    return value.exit_code if value.exit_code is not None else -1, output
+
+
+def _strict_bash(script: str) -> str:
+    strict = "set -euo pipefail"
+    if strict in script:
+        return script
+    lines = script.splitlines()
+    if lines and lines[0].startswith("#!"):
+        return "\n".join([lines[0], strict, *lines[1:]])
+    return f"{strict}\n{script}"
+
+
 def exec_script(container, script: str, timeout: int = 300) -> tuple[int, str]:
+    script = _strict_bash(script)
     _docker().api.put_archive(container.id, "/tmp", _script_tar(script))
-    result = container.exec_run(["bash", "/tmp/ollamagi_task.sh"], stream=False, demux=False)
-    output = result.output.decode("utf-8", errors="replace") if result.output else ""
-    return result.exit_code or 0, output
+    return _exec_with_timeout(container, ["bash", "/tmp/ollamagi_task.sh"], timeout)
 
 
 def exec_python(container, code: str, timeout: int = 300) -> tuple[int, str]:
     """Write Python code directly (no bash wrapper) and execute with python3."""
     _docker().api.put_archive(container.id, "/tmp", _python_tar(code))
-    result = container.exec_run(["python3", "/tmp/ollamagi_task.py"], stream=False, demux=False)
-    output = result.output.decode("utf-8", errors="replace") if result.output else ""
-    return result.exit_code or 0, output
+    return _exec_with_timeout(container, ["python3", "/tmp/ollamagi_task.py"], timeout)
 
 
 def exec_command(container, cmd: str) -> tuple[int, str]:
@@ -154,6 +200,15 @@ def exec_command(container, cmd: str) -> tuple[int, str]:
 
 
 def stop_container(container):
+    try:
+        # Agent processes run as root for package installation. Return generated
+        # artifacts to the host service user so later flows and manual edits work.
+        container.exec_run(
+            ["chown", "-R", f"{os.getuid()}:{os.getgid()}", "/work"],
+            user="root",
+        )
+    except Exception:
+        pass
     try:
         container.stop(timeout=5)
         container.remove(force=True)
