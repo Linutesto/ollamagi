@@ -782,6 +782,25 @@ function connectWS() {
     const msg = JSON.parse(e.data);
     if (msg.type === 'log') {
       addLog(`[${(msg.flow_id||'').slice(0,6)}] ${msg.msg}`, msg.level || 'info');
+      // Stream into transcript panel if it's open for this flow
+      if (msg.flow_id && _transcriptLoaded === msg.flow_id) {
+        const liveEl  = document.getElementById(`tlog-live-${msg.flow_id}`);
+        const scrollEl = document.getElementById(`tlog-scroll-${msg.flow_id}`);
+        const countEl  = document.getElementById(`tlog-count-${msg.flow_id}`);
+        const liveInd  = document.getElementById(`tlog-live-ind-${msg.flow_id}`);
+        if (liveEl) {
+          liveEl.insertAdjacentHTML('beforeend', renderTlogLine(msg));
+          if (liveInd) liveInd.style.display = '';
+          if (countEl) {
+            const n = parseInt(countEl.textContent.match(/\d+/)?.[0] || '0') + 1;
+            countEl.textContent = `(${n} entries)`;
+          }
+          if (scrollEl) {
+            const nearBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 100;
+            if (nearBottom) scrollEl.scrollTop = scrollEl.scrollHeight;
+          }
+        }
+      }
     } else if (msg.type === 'term_output') {
       if (!termFlowId || termFlowId === msg.flow_id) {
         termAppend(msg.output, msg.stream === 'stderr' ? 'err' : 'out');
@@ -1347,14 +1366,23 @@ function switchDetailTab(tab, flowId) {
   if (tab === 'files' && _filesLoaded !== flowId) loadExplorer(flowId);
 }
 
+function renderTlogLine(l) {
+  const lvl = l.level || 'info';
+  const cls = {error:'tlog-error', warn:'tlog-warn', success:'tlog-success'}[lvl] || 'tlog-info';
+  return `<div class="tlog-line"><span class="tlog-ts">${fmtTime(l.ts)}</span><span class="tlog-msg ${cls}">${esc(l.msg)}</span></div>`;
+}
+
 async function loadTranscript(flowId) {
   _transcriptLoaded = flowId;
   const body = document.getElementById(`transcript-body-${flowId}`);
   if (!body) return;
   const data = await fetch(`${API}/api/flows/${flowId}/transcript`).then(r=>r.json()).catch(()=>null);
   if (!data) { body.innerHTML = '<div style="color:var(--red)">Failed to load transcript</div>'; return; }
-  body.innerHTML = buildTranscriptHtml(data);
-  // Re-attach toggle listeners
+  body.innerHTML = buildTranscriptHtml(data, flowId);
+  // Scroll log to bottom (most recent at end)
+  const scrollEl = document.getElementById(`tlog-scroll-${flowId}`);
+  if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+  // Re-attach toggle listeners for task blocks
   body.querySelectorAll('.transcript-task-hdr').forEach(hdr => {
     hdr.onclick = () => {
       const b = hdr.nextElementSibling;
@@ -1363,20 +1391,25 @@ async function loadTranscript(flowId) {
   });
 }
 
-function buildTranscriptHtml(data) {
+function buildTranscriptHtml(data, flowId) {
   let h = '';
-  // Log section
-  if (data.logs?.length) {
-    h += `<div class="transcript-section">
-      <div class="transcript-section-title">Event Log (${data.logs.length} entries)</div>`;
-    data.logs.forEach(l => {
-      const lvl = l.level || 'info';
-      const cls = lvl === 'error' ? 'tlog-error' : lvl === 'warn' ? 'tlog-warn' : lvl === 'success' ? 'tlog-success' : 'tlog-info';
-      h += `<div class="tlog-line"><span class="tlog-ts">${fmtTime(l.ts)}</span><span class="tlog-msg ${cls}">${esc(l.msg)}</span></div>`;
-    });
-    h += `</div>`;
+  const logCount = data.logs?.length || 0;
+  // Log section — scrollable with separate live-append target
+  h += `<div class="transcript-section">
+    <div class="transcript-section-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Event Log <span id="tlog-count-${flowId}">(${logCount} entries)</span></span>
+      <span id="tlog-live-ind-${flowId}" style="font-size:10px;color:var(--green);font-weight:700;display:none">● LIVE</span>
+    </div>
+    <div id="tlog-scroll-${flowId}" style="max-height:420px;overflow-y:auto">
+      <div id="tlog-hist-${flowId}">`;
+  if (!logCount) {
+    h += '<div style="color:var(--text2);font-size:12px;padding:8px 0">No log entries yet</div>';
+  } else {
+    (data.logs||[]).forEach(l => { h += renderTlogLine(l); });
   }
-  // Tasks section
+  h += `</div><div id="tlog-live-${flowId}"></div></div></div>`;
+
+  // Task results section (full, untruncated)
   if (data.tasks?.length) {
     h += `<div class="transcript-section">
       <div class="transcript-section-title">Task Results (full, untruncated)</div>`;
@@ -1398,9 +1431,7 @@ function buildTranscriptHtml(data) {
             <span style="color:${sc};margin-right:6px">${si}</span>${esc(s.title)}
             ${s.attempts > 1 ? `<span class="retry-badge">↻ ${s.attempts}×</span>` : ''}
           </div>`;
-        if (s.result) {
-          h += `<div class="transcript-result">${esc(s.result)}</div>`;
-        }
+        if (s.result) h += `<div class="transcript-result">${esc(s.result)}</div>`;
         h += `</div>`;
       });
       if (t.result) {
@@ -1409,9 +1440,6 @@ function buildTranscriptHtml(data) {
       h += `</div></div>`;
     });
     h += `</div>`;
-  }
-  if (!data.logs?.length && !data.tasks?.length) {
-    h = '<div style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">No transcript data available yet</div>';
   }
   return h;
 }
