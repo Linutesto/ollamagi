@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>OllamAGI</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
 :root {
   --bg:      #0d1117;
@@ -307,6 +309,72 @@ select.form-input { cursor: pointer; }
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* DETAIL TABS */
+.detail-tabs { display: flex; gap: 0; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.detail-tab { flex: 1; padding: 10px 6px; background: none; border: none; border-bottom: 2px solid transparent;
+              color: var(--text2); font-size: 13px; font-weight: 600; cursor: pointer;
+              transition: color 0.15s, border-color 0.15s; margin-bottom: -1px; }
+.detail-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.detail-tab:active { background: var(--bg3); }
+
+/* TRANSCRIPT */
+.transcript-section { margin-bottom: 18px; }
+.transcript-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                             letter-spacing: 1px; color: var(--text2); margin-bottom: 8px;
+                             padding: 6px 0; border-bottom: 1px solid var(--border); }
+.tlog-line { display: flex; gap: 8px; padding: 3px 0; font-family: 'Courier New', monospace;
+             font-size: 11.5px; line-height: 1.5; border-bottom: 1px solid #1a1f26; }
+.tlog-ts { color: #484f58; flex-shrink: 0; font-size: 10px; padding-top: 2px; min-width: 70px; }
+.tlog-msg { flex: 1; word-break: break-word; }
+.tlog-info    { color: var(--text2); }
+.tlog-error   { color: var(--red); }
+.tlog-success { color: var(--green); }
+.tlog-warn    { color: var(--yellow); }
+.transcript-task { background: var(--bg2); border: 1px solid var(--border);
+                   border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+.transcript-task-hdr { padding: 10px 13px; display: flex; align-items: center; gap: 8px;
+                        cursor: pointer; user-select: none; }
+.transcript-task-hdr:active { background: var(--bg3); }
+.transcript-task-body { border-top: 1px solid var(--border); }
+.transcript-subtask { padding: 10px 13px; border-bottom: 1px solid var(--border); }
+.transcript-subtask:last-child { border-bottom: none; }
+.transcript-subtask-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.transcript-result { font-family: 'Courier New', monospace; font-size: 12px; color: var(--text);
+                     background: var(--bg3); padding: 10px 12px; border-radius: 6px;
+                     white-space: pre-wrap; word-break: break-word; line-height: 1.5;
+                     max-height: 300px; overflow-y: auto; }
+
+/* FILE EXPLORER */
+.explorer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.explorer-dl-btn { padding: 7px 13px; background: var(--bg3); border: 1px solid var(--border);
+                   color: var(--text2); border-radius: 8px; font-size: 12px; cursor: pointer; font-weight: 600; }
+.explorer-dl-btn:active { border-color: var(--accent); color: var(--accent); }
+.file-item { display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+             background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+             margin-bottom: 6px; cursor: pointer; transition: border-color 0.15s; }
+.file-item:active { border-color: var(--accent); }
+.file-icon { font-size: 16px; flex-shrink: 0; }
+.file-name { flex: 1; min-width: 0; font-size: 13px; font-family: monospace;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-dir  { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden;
+             text-overflow: ellipsis; }
+.file-size { font-size: 11px; color: var(--text2); flex-shrink: 0; }
+.file-viewer-wrap { display: none; }
+.file-viewer-wrap.open { display: block; }
+.file-viewer-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.file-viewer-back { background: none; border: none; color: var(--accent); font-size: 14px;
+                    cursor: pointer; padding: 0; font-weight: 600; flex-shrink: 0; }
+.file-viewer-path { flex: 1; font-family: monospace; font-size: 12px; color: var(--text2);
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-viewer-copy { padding: 6px 11px; background: var(--bg3); border: 1px solid var(--border);
+                    color: var(--text2); border-radius: 7px; font-size: 11px; cursor: pointer; font-weight: 600; }
+.file-viewer-copy:active { border-color: var(--accent); color: var(--accent); }
+.file-code { margin: 0; border-radius: 8px; font-size: 12px; line-height: 1.5;
+             max-height: calc(100vh - 300px); overflow-y: auto; }
+.file-code code { font-family: 'Courier New', monospace !important; }
+.file-binary { padding: 20px; text-align: center; color: var(--text2); font-size: 13px;
+               background: var(--bg3); border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -825,6 +893,12 @@ let _detailFlowId = null;
 let _detailRefreshTimer = null;
 
 function renderFlowDetail(flow) {
+  // Reset tab caches when switching to a different flow
+  if (_detailFlowId !== flow.id) {
+    _transcriptLoaded = null;
+    _filesLoaded = null;
+    _currentDetailTab = 'tasks';
+  }
   _detailFlowId = flow.id;
   const tm = TYPE_META[flow.flow_type] || TYPE_META.general;
   const dur = flow.finished_at
@@ -870,6 +944,20 @@ function renderFlowDetail(flow) {
   if (flow.replan_count > 0) {
     html += `<div class="replan-banner">↻ Replanned ${flow.replan_count}× — agents adapted the task list</div>`;
   }
+  if (flow.repair_count > 0) {
+    html += `<div class="replan-banner">🛠 Final validation repaired ${flow.repair_count}×</div>`;
+  }
+
+  // Tab bar
+  html += `
+  <div class="detail-tabs">
+    <button class="detail-tab active" id="tab-tasks-${flow.id}" onclick="switchDetailTab('tasks','${flow.id}')">Tasks</button>
+    <button class="detail-tab" id="tab-transcript-${flow.id}" onclick="switchDetailTab('transcript','${flow.id}')">Transcript</button>
+    <button class="detail-tab" id="tab-files-${flow.id}" onclick="switchDetailTab('files','${flow.id}')">Files</button>
+  </div>`;
+
+  // Tasks panel
+  html += `<div id="panel-tasks-${flow.id}" class="detail-panel">`;
 
   if (!flow.tasks?.length) {
     html += '<div style="color:var(--text2);font-size:13px;padding:16px 0">Agents are planning…</div>';
@@ -877,7 +965,7 @@ function renderFlowDetail(flow) {
 
   (flow.tasks||[]).forEach(t => {
     const ac = AGENT_COLORS[t.agent]||'var(--accent)';
-    const sdone = t.subtasks?.filter(s=>s.status==='finished').length||0;
+    const sdone = t.subtasks?.filter(s=>s.status==='finished'||s.status==='superseded').length||0;
     const stotal = t.subtasks?.length||0;
     html += `
     <div class="card" id="ftask-${t.id}">
@@ -897,9 +985,23 @@ function renderFlowDetail(flow) {
     </div>`;
   });
 
+  html += `</div>`; // end panel-tasks
+
+  // Transcript panel
+  html += `<div id="panel-transcript-${flow.id}" class="detail-panel" style="display:none">
+    <div id="transcript-body-${flow.id}" style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">Loading transcript…</div>
+  </div>`;
+
+  // Files panel
+  html += `<div id="panel-files-${flow.id}" class="detail-panel" style="display:none">
+    <div id="files-body-${flow.id}" style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">Loading files…</div>
+  </div>`;
+
   // Capture which cards are currently open BEFORE replacing the DOM
   const openCardIds = new Set();
   document.querySelectorAll('#detail-content .card.open').forEach(c => openCardIds.add(c.id));
+  // Snapshot active tab content so we can restore it after re-render
+  const activeTab = _currentDetailTab;
 
   document.getElementById('detail-content').innerHTML = html;
 
@@ -911,6 +1013,20 @@ function renderFlowDetail(flow) {
     const body = card.querySelector('.card-body');
     if (body) body.style.display = 'block';
   });
+
+  // Restore active tab (handles auto-refresh while on transcript/files tab)
+  if (activeTab !== 'tasks') {
+    // Switch visually without triggering a reload if already loaded
+    ['tasks','transcript','files'].forEach(t => {
+      const btn = document.getElementById(`tab-${t}-${flow.id}`);
+      const panel = document.getElementById(`panel-${t}-${flow.id}`);
+      if (btn) btn.classList.toggle('active', t === activeTab);
+      if (panel) panel.style.display = t === activeTab ? '' : 'none';
+    });
+    // Reload transcript/files after DOM replacement (content is gone)
+    if (activeTab === 'transcript') loadTranscript(flow.id);
+    if (activeTab === 'files') loadExplorer(flow.id);
+  }
 
   // Auto-refresh detail while running — only start timer once per flow
   clearInterval(_detailRefreshTimer);
@@ -926,9 +1042,9 @@ function renderFlowDetail(flow) {
 }
 
 function renderSubtask(s) {
-  const icons = {finished:'✓', failed:'✗', running:'●', created:'○', retrying:'↻'};
+  const icons = {finished:'✓', superseded:'↪', failed:'✗', running:'●', created:'○', retrying:'↻'};
   const icols = {finished:'var(--green)', failed:'var(--red)', running:'var(--accent)',
-                 created:'var(--text2)', retrying:'var(--yellow)'};
+                 superseded:'var(--text2)', created:'var(--text2)', retrying:'var(--yellow)'};
   const ac = AGENT_COLORS[s.agent]||'var(--purple)';
   const retryBadge = s.attempts > 1
     ? `<span class="retry-badge">↻ attempt ${s.attempts}</span>` : '';
@@ -1186,6 +1302,210 @@ function fmtNum(n) {
   if (n>=1000000) return (n/1000000).toFixed(1)+'M';
   if (n>=1000) return (n/1000).toFixed(1)+'k';
   return String(n);
+}
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/1024/1024).toFixed(1) + ' MB';
+}
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.toTimeString().slice(0,8);
+}
+function fileIcon(path) {
+  const ext = (path.split('.').pop()||'').toLowerCase();
+  const icons = {py:'🐍', js:'📜', ts:'📘', html:'🌐', css:'🎨', json:'{}',
+                 md:'📝', txt:'📄', sh:'⚡', yaml:'⚙', yml:'⚙', toml:'⚙',
+                 png:'🖼', jpg:'🖼', jpeg:'🖼', gif:'🖼', svg:'🖼',
+                 zip:'📦', gz:'📦', tar:'📦', pdf:'📑', csv:'📊'};
+  return icons[ext] || '📄';
+}
+function langFor(path) {
+  const ext = (path.split('.').pop()||'').toLowerCase();
+  const langs = {py:'python', js:'javascript', ts:'typescript', html:'html', css:'css',
+                 json:'json', md:'markdown', sh:'bash', yaml:'yaml', yml:'yaml',
+                 toml:'ini', txt:'plaintext', csv:'plaintext'};
+  return langs[ext] || 'plaintext';
+}
+
+// ── DETAIL TABS ──
+let _transcriptLoaded = null;
+let _filesLoaded = null;
+let _currentDetailTab = 'tasks';
+let _explorerFlowId = null;
+
+function switchDetailTab(tab, flowId) {
+  _currentDetailTab = tab;
+  ['tasks','transcript','files'].forEach(t => {
+    const btn = document.getElementById(`tab-${t}-${flowId}`);
+    const panel = document.getElementById(`panel-${t}-${flowId}`);
+    if (btn) btn.classList.toggle('active', t === tab);
+    if (panel) panel.style.display = t === tab ? '' : 'none';
+  });
+  if (tab === 'transcript' && _transcriptLoaded !== flowId) loadTranscript(flowId);
+  if (tab === 'files' && _filesLoaded !== flowId) loadExplorer(flowId);
+}
+
+async function loadTranscript(flowId) {
+  _transcriptLoaded = flowId;
+  const body = document.getElementById(`transcript-body-${flowId}`);
+  if (!body) return;
+  const data = await fetch(`${API}/api/flows/${flowId}/transcript`).then(r=>r.json()).catch(()=>null);
+  if (!data) { body.innerHTML = '<div style="color:var(--red)">Failed to load transcript</div>'; return; }
+  body.innerHTML = buildTranscriptHtml(data);
+  // Re-attach toggle listeners
+  body.querySelectorAll('.transcript-task-hdr').forEach(hdr => {
+    hdr.onclick = () => {
+      const b = hdr.nextElementSibling;
+      if (b) b.style.display = b.style.display === 'none' ? '' : 'none';
+    };
+  });
+}
+
+function buildTranscriptHtml(data) {
+  let h = '';
+  // Log section
+  if (data.logs?.length) {
+    h += `<div class="transcript-section">
+      <div class="transcript-section-title">Event Log (${data.logs.length} entries)</div>`;
+    data.logs.forEach(l => {
+      const lvl = l.level || 'info';
+      const cls = lvl === 'error' ? 'tlog-error' : lvl === 'warn' ? 'tlog-warn' : lvl === 'success' ? 'tlog-success' : 'tlog-info';
+      h += `<div class="tlog-line"><span class="tlog-ts">${fmtTime(l.ts)}</span><span class="tlog-msg ${cls}">${esc(l.msg)}</span></div>`;
+    });
+    h += `</div>`;
+  }
+  // Tasks section
+  if (data.tasks?.length) {
+    h += `<div class="transcript-section">
+      <div class="transcript-section-title">Task Results (full, untruncated)</div>`;
+    data.tasks.forEach(t => {
+      const statusColor = {finished:'var(--green)',failed:'var(--red)',running:'var(--accent)'}[t.status] || 'var(--text2)';
+      const ac = AGENT_COLORS[t.agent] || 'var(--accent)';
+      h += `<div class="transcript-task">
+        <div class="transcript-task-hdr">
+          <span class="agent-tag" style="background:${ac}22;color:${ac};font-size:11px">${esc(t.agent)}</span>
+          <span style="flex:1;font-size:13px;font-weight:600;min-width:0">${esc(t.title)}</span>
+          <span style="font-size:11px;color:${statusColor};font-weight:700;flex-shrink:0">${t.status}</span>
+        </div>
+        <div class="transcript-task-body">`;
+      (t.subtasks||[]).forEach(s => {
+        const si = {finished:'✓',failed:'✗',running:'●',retrying:'↻',superseded:'↪',created:'○'}[s.status]||'○';
+        const sc = {finished:'var(--green)',failed:'var(--red)',running:'var(--accent)',retrying:'var(--yellow)'}[s.status]||'var(--text2)';
+        h += `<div class="transcript-subtask">
+          <div class="transcript-subtask-title">
+            <span style="color:${sc};margin-right:6px">${si}</span>${esc(s.title)}
+            ${s.attempts > 1 ? `<span class="retry-badge">↻ ${s.attempts}×</span>` : ''}
+          </div>`;
+        if (s.result) {
+          h += `<div class="transcript-result">${esc(s.result)}</div>`;
+        }
+        h += `</div>`;
+      });
+      if (t.result) {
+        h += `<div class="transcript-subtask"><div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:5px">TASK SUMMARY</div><div class="transcript-result">${esc(t.result)}</div></div>`;
+      }
+      h += `</div></div>`;
+    });
+    h += `</div>`;
+  }
+  if (!data.logs?.length && !data.tasks?.length) {
+    h = '<div style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">No transcript data available yet</div>';
+  }
+  return h;
+}
+
+// ── FILE EXPLORER ──
+async function loadExplorer(flowId) {
+  _filesLoaded = flowId;
+  _explorerFlowId = flowId;
+  const body = document.getElementById(`files-body-${flowId}`);
+  if (!body) return;
+  const files = await fetch(`${API}/api/flows/${flowId}/workspace`).then(r=>r.json()).catch(()=>null);
+  if (!files) { body.innerHTML = '<div style="color:var(--red)">Failed to load files</div>'; return; }
+  body.innerHTML = buildFileTreeHtml(flowId, files);
+}
+
+function buildFileTreeHtml(flowId, files) {
+  if (!files.length) return '<div style="color:var(--text2);font-size:13px;padding:20px 0;text-align:center">No project files yet</div>';
+  let h = `<div class="explorer-header">
+    <span style="font-size:12px;color:var(--text2)">${files.length} file${files.length!==1?'s':''}</span>
+    <button class="explorer-dl-btn" onclick="downloadZip('${flowId}')">⬇ Download ZIP</button>
+  </div>
+  <div id="file-list-${flowId}">`;
+  files.forEach(f => {
+    const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+    h += `<div class="file-item" onclick="openExplorerFile('${flowId}','${f.path.replace(/'/g,"\\'")}')">
+      <span class="file-icon">${fileIcon(f.path)}</span>
+      <div style="flex:1;min-width:0">
+        <div class="file-name">${esc(f.path.split('/').pop())}</div>
+        ${dir ? `<div class="file-dir">${esc(dir)}/</div>` : ''}
+      </div>
+      <span class="file-size">${fmtSize(f.size)}</span>
+    </div>`;
+  });
+  h += `</div>
+  <div class="file-viewer-wrap" id="file-viewer-${flowId}">
+    <div class="file-viewer-hdr">
+      <button class="file-viewer-back" onclick="closeFileViewer('${flowId}')">‹ Files</button>
+      <span class="file-viewer-path" id="viewer-path-${flowId}"></span>
+      <button class="file-viewer-copy" onclick="copyFileContent('${flowId}')">Copy</button>
+    </div>
+    <div id="viewer-content-${flowId}"></div>
+  </div>`;
+  return h;
+}
+
+async function openExplorerFile(flowId, path) {
+  const listEl = document.getElementById(`file-list-${flowId}`);
+  const viewerEl = document.getElementById(`file-viewer-${flowId}`);
+  const pathEl = document.getElementById(`viewer-path-${flowId}`);
+  const contentEl = document.getElementById(`viewer-content-${flowId}`);
+  if (!viewerEl || !contentEl) return;
+
+  if (listEl) listEl.style.display = 'none';
+  viewerEl.classList.add('open');
+  pathEl.textContent = path;
+  contentEl.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px">Loading…</div>';
+
+  const data = await fetch(`${API}/api/flows/${flowId}/file?path=${encodeURIComponent(path)}`).then(r=>r.json()).catch(()=>null);
+  if (!data || data.error) {
+    contentEl.innerHTML = `<div style="color:var(--red);font-size:13px;padding:12px">${data?.error||'Failed to load'}</div>`;
+    return;
+  }
+  if (data.content === null) {
+    contentEl.innerHTML = '<div class="file-binary">Binary file — cannot display</div>';
+    return;
+  }
+  const lang = langFor(path);
+  const pre = document.createElement('pre');
+  pre.className = 'file-code';
+  const code = document.createElement('code');
+  code.className = `language-${lang}`;
+  code.textContent = data.content;
+  pre.appendChild(code);
+  contentEl.innerHTML = '';
+  contentEl.appendChild(pre);
+  if (window.hljs) hljs.highlightElement(code);
+}
+
+function closeFileViewer(flowId) {
+  const listEl = document.getElementById(`file-list-${flowId}`);
+  const viewerEl = document.getElementById(`file-viewer-${flowId}`);
+  if (listEl) listEl.style.display = '';
+  if (viewerEl) viewerEl.classList.remove('open');
+}
+
+function copyFileContent(flowId) {
+  const contentEl = document.getElementById(`viewer-content-${flowId}`);
+  if (!contentEl) return;
+  const text = contentEl.querySelector('code')?.textContent || contentEl.textContent || '';
+  navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard')).catch(() => toast('Copy failed'));
+}
+
+function downloadZip(flowId) {
+  window.location.href = `${API}/api/flows/${flowId}/download`;
 }
 
 // ── INIT ──

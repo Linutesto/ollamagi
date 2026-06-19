@@ -8,12 +8,15 @@ import urllib.request
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from core.config import WORKSPACE_DIR, HERMES_DB, HW_CPU, HW_RAM, HW_GPU, SSH_HOST, SSH_USER, SSH_KEY
+from core.config import (
+    WORKSPACE_DIR, HERMES_DB, OLLAMA_URL, HW_CPU, HW_RAM, HW_GPU,
+    SSH_HOST, SSH_USER, SSH_KEY,
+)
 from core.orchestrator import (run_flow, get_flow, get_all_flows, register_log_callback,
-                                _flow_to_dict, request_stop, inject_steer)
+                                _flow_to_dict, get_flow_transcript, request_stop, inject_steer)
 from core.memory_bridge import get_relevant_context, get_goals, store_memory
 from core.model_router import get_tokens, get_all_tokens, get_session_tokens, reset_session_tokens
 
@@ -151,7 +154,7 @@ async def system_status():
     ollama_ok = False
     ollama_models = 0
     try:
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as r:
+        with urllib.request.urlopen(f"{OLLAMA_URL.rstrip('/')}/api/tags", timeout=3) as r:
             data = json.loads(r.read())
             ollama_models = len(data.get("models", []))
             ollama_ok = True
@@ -272,13 +275,65 @@ async def flow_workspace(flow_id: str):
         return JSONResponse([])
     files = []
     for f in sorted(work_dir.rglob("*")):
-        if f.is_file() and f.name != "flow.json":
+        if f.is_file() and f.name not in ("flow.json", "flow_log.jsonl"):
             files.append({
                 "path": str(f.relative_to(work_dir)),
                 "size": f.stat().st_size,
                 "modified": f.stat().st_mtime,
             })
     return JSONResponse(files)
+
+
+@app.get("/api/flows/{flow_id}/transcript")
+async def flow_transcript(flow_id: str):
+    data = get_flow_transcript(flow_id)
+    if data is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(data)
+
+
+@app.get("/api/flows/{flow_id}/file")
+async def flow_file(flow_id: str, path: str = ""):
+    if not path:
+        return JSONResponse({"error": "path required"}, status_code=400)
+    work_dir = WORKSPACE_DIR / flow_id
+    # Prevent path traversal
+    try:
+        target = (work_dir / path).resolve()
+        target.relative_to(work_dir.resolve())
+    except ValueError:
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not target.exists() or not target.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        content = target.read_text(errors="replace")
+        return JSONResponse({"path": path, "content": content, "size": target.stat().st_size})
+    except Exception:
+        # Binary file — return base64
+        import base64
+        content_b64 = base64.b64encode(target.read_bytes()).decode()
+        return JSONResponse({"path": path, "content": None, "binary": content_b64,
+                             "size": target.stat().st_size})
+
+
+@app.get("/api/flows/{flow_id}/download")
+async def flow_download(flow_id: str):
+    import io, zipfile
+    work_dir = WORKSPACE_DIR / flow_id
+    if not work_dir.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(work_dir.rglob("*")):
+            if f.is_file() and f.name not in ("flow.json", "flow_log.jsonl"):
+                zf.write(f, arcname=str(f.relative_to(work_dir)))
+    buf.seek(0)
+    filename = f"ollamagi-{flow_id[:8]}.zip"
+    return StreamingResponse(
+        iter([buf.read()]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.websocket("/ws")

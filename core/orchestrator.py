@@ -129,11 +129,71 @@ def _drain_steer(flow_id: str) -> list[str]:
 
 # ── Persistence ──────────────────────────────────────────────────────────────
 def _log(flow_id: str, msg: str, level: str = "info"):
+    entry = {"flow_id": flow_id, "msg": msg, "level": level, "ts": time.time()}
     for cb in _log_callbacks.get(flow_id, []):
         try:
-            cb({"flow_id": flow_id, "msg": msg, "level": level, "ts": time.time()})
+            cb(entry)
         except Exception:
             pass
+    try:
+        log_path = WORKSPACE_DIR / flow_id / "flow_log.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
+def get_flow_transcript(flow_id: str) -> dict | None:
+    """Return full untruncated flow data + log lines for the transcript viewer."""
+    flow = _flows.get(flow_id)
+
+    # Build log lines from disk (covers restarted server sessions too)
+    logs: list[dict] = []
+    log_path = WORKSPACE_DIR / flow_id / "flow_log.jsonl"
+    if log_path.exists():
+        try:
+            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        logs.append(json.loads(line))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    if flow is None:
+        # Flow not in memory (server restarted) — return logs only
+        return {"flow_id": flow_id, "logs": logs, "tasks": []}
+
+    def _full_subtask(s: Subtask) -> dict:
+        return {
+            "id": s.id, "title": s.title, "description": s.description,
+            "agent": s.agent, "status": s.status,
+            "result": s.result, "output": s.output,
+            "attempts": s.attempts, "artifacts": s.artifacts,
+            "validation": s.validation, "deliverable_kind": s.deliverable_kind,
+            "started_at": s.started_at, "finished_at": s.finished_at,
+        }
+
+    def _full_task(t: Task) -> dict:
+        return {
+            "id": t.id, "title": t.title, "description": t.description,
+            "agent": t.agent, "status": t.status,
+            "result": t.result,
+            "started_at": t.started_at, "finished_at": t.finished_at,
+            "subtasks": [_full_subtask(s) for s in t.subtasks],
+        }
+
+    return {
+        "flow_id": flow_id,
+        "title": flow.title,
+        "objective": flow.objective,
+        "status": flow.status,
+        "logs": logs,
+        "tasks": [_full_task(t) for t in flow.tasks],
+    }
 
 def _save(flow: Flow):
     work_dir = WORKSPACE_DIR / flow.id
