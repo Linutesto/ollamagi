@@ -1,23 +1,21 @@
 """OllamAGI FastAPI server — complete REST API + WebSocket + static dashboard."""
 import asyncio
 import json
-import sqlite3
 import threading
 import uuid
 import urllib.request
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.config import (
-    WORKSPACE_DIR, HERMES_DB, OLLAMA_URL, HW_CPU, HW_RAM, HW_GPU,
+    WORKSPACE_DIR, OLLAMA_URL, HW_CPU, HW_RAM, HW_GPU,
     SSH_HOST, SSH_USER, SSH_KEY,
 )
 from core.orchestrator import (run_flow, get_flow, get_all_flows, register_log_callback,
                                 _flow_to_dict, get_flow_transcript, request_stop, inject_steer)
-from core.memory_bridge import get_relevant_context, get_goals, store_memory
 from core.model_router import get_tokens, get_all_tokens, get_session_tokens, reset_session_tokens
 
 app = FastAPI(title="OllamAGI", version="1.0.0")
@@ -50,7 +48,12 @@ async def _broadcast(msg: dict):
 
 @app.get("/")
 async def dashboard():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    # Read fresh each request — no ETag, no caching — so dev edits appear immediately
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 @app.get("/api/flows")
@@ -109,29 +112,59 @@ async def steer_flow(flow_id: str, body: dict):
     return JSONResponse({"ok": True, "flow_id": flow_id})
 
 
-@app.get("/api/memory/goals")
-async def list_goals():
-    return JSONResponse(get_goals(limit=15))
-
-
 @app.get("/api/memory/search")
 async def search_memory(q: str = ""):
     if not q:
         return JSONResponse([])
-    return JSONResponse(get_relevant_context(q, limit=12))
+    from core.fractal_memory import query as fquery
+    results = fquery(q, limit=12)
+    return JSONResponse(results)
 
 
 @app.get("/api/memory/stats")
 async def memory_stats():
-    try:
-        db = sqlite3.connect(HERMES_DB, timeout=5)
-        beliefs = db.execute("SELECT COUNT(*) FROM beliefs").fetchone()[0]
-        memories = db.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        goals = db.execute("SELECT COUNT(*) FROM goals").fetchone()[0]
-        db.close()
-        return JSONResponse({"beliefs": beliefs, "memories": memories, "goals": goals})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    from core.fractal_memory import stats as fstats
+    return JSONResponse(fstats())
+
+
+@app.get("/api/memory/recent")
+async def memory_recent(limit: int = 30):
+    """Return the most recently inserted leaf memories (level 0)."""
+    from core.fractal_memory import _conn, _init_db, get_lineage
+    import json as _json
+    _init_db()
+    db = _conn()
+    rows = db.execute(
+        "SELECT id, content, tags, flow_id, created_at, access_count "
+        "FROM nodes WHERE level=0 ORDER BY created_at DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    results = []
+    for r in rows:
+        results.append({
+            "id": r["id"],
+            "content": r["content"],
+            "tags": _json.loads(r["tags"] or "[]"),
+            "flow_id": r["flow_id"],
+            "created_at": r["created_at"],
+            "access_count": r["access_count"],
+            "lineage": get_lineage(r["id"]),
+        })
+    return JSONResponse(results)
+
+
+@app.get("/api/memory/graph")
+async def memory_graph(level: int = 1, limit: int = 100):
+    """Return cluster nodes for visualizing the fractal hierarchy."""
+    from core.fractal_memory import _conn, _init_db
+    _init_db()
+    db = _conn()
+    rows = db.execute(
+        "SELECT id, level, label, content, parent_id, child_count, created_at "
+        "FROM nodes WHERE level >= ? ORDER BY level DESC, child_count DESC LIMIT ?",
+        (level, limit)
+    ).fetchall()
+    return JSONResponse([dict(r) for r in rows])
 
 
 @app.get("/api/system/info")
@@ -160,17 +193,14 @@ async def system_status():
             ollama_ok = True
     except Exception:
         pass
-    hermes_ok = False
+    from core.fractal_memory import stats as mem_stats
     try:
-        db = sqlite3.connect(HERMES_DB, timeout=3)
-        db.execute("SELECT 1 FROM beliefs LIMIT 1")
-        db.close()
-        hermes_ok = True
+        ms = mem_stats()
     except Exception:
-        pass
+        ms = {"total_nodes": 0}
     return JSONResponse({
         "ollama": {"ok": ollama_ok, "models": ollama_models},
-        "hermes": {"ok": hermes_ok},
+        "memory": {**ms, "ok": True},
     })
 
 
@@ -260,12 +290,14 @@ async def flow_tokens(flow_id: str):
 
 
 @app.post("/api/memory/store")
-async def store_to_hermes(body: dict):
+async def store_to_memory(body: dict):
     content = body.get("content", "").strip()
+    tags = body.get("tags", [])
     if not content:
         return JSONResponse({"error": "content required"}, status_code=400)
-    ok = store_memory(content, source="ollamagi:manual", tags=["manual"])
-    return JSONResponse({"ok": ok})
+    from core.fractal_memory import insert as finsert
+    node_id = finsert(content, tags=tags, metadata={"source": "manual"})
+    return JSONResponse({"ok": True, "id": node_id})
 
 
 @app.get("/api/flows/{flow_id}/workspace")
@@ -314,6 +346,29 @@ async def flow_file(flow_id: str, path: str = ""):
         content_b64 = base64.b64encode(target.read_bytes()).decode()
         return JSONResponse({"path": path, "content": None, "binary": content_b64,
                              "size": target.stat().st_size})
+
+
+@app.get("/api/flows/{flow_id}/rawfile")
+async def flow_rawfile(flow_id: str, path: str = ""):
+    if not path:
+        return JSONResponse({"error": "path required"}, status_code=400)
+    work_dir = WORKSPACE_DIR / flow_id
+    try:
+        target = (work_dir / path).resolve()
+        target.relative_to(work_dir.resolve())
+    except ValueError:
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not target.exists() or not target.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    import mimetypes
+    mime, _ = mimetypes.guess_type(str(target))
+    mime = mime or "application/octet-stream"
+    filename = target.name
+    return StreamingResponse(
+        open(target, "rb"),  # noqa: SIM115
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/flows/{flow_id}/download")

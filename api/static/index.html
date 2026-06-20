@@ -106,8 +106,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 .subtask-result { font-size: 12px; color: var(--text2); margin-top: 6px;
                    font-family: 'Courier New', monospace; line-height: 1.5;
                    white-space: pre-wrap; word-break: break-word;
-                   max-height: 130px; overflow-y: auto;
                    background: var(--bg3); padding: 8px; border-radius: 6px; }
+.result-expand-btn { display: block; margin-top: 6px; padding: 3px 0; font-size: 11px;
+                     color: var(--accent); background: none; border: none; cursor: pointer;
+                     font-family: inherit; text-align: left; }
+.result-expand-btn:hover { text-decoration: underline; }
 .subtask-agent { font-size: 11px; color: var(--purple); font-weight: 700; margin-top: 2px; }
 .task-result { margin: 0 14px 12px; padding: 10px 12px; background: var(--bg3);
                border-radius: 8px; font-size: 13px; color: var(--text2); line-height: 1.6;
@@ -342,8 +345,7 @@ select.form-input { cursor: pointer; }
 .transcript-subtask-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .transcript-result { font-family: 'Courier New', monospace; font-size: 12px; color: var(--text);
                      background: var(--bg3); padding: 10px 12px; border-radius: 6px;
-                     white-space: pre-wrap; word-break: break-word; line-height: 1.5;
-                     max-height: 300px; overflow-y: auto; }
+                     white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
 
 /* FILE EXPLORER */
 .explorer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -508,19 +510,40 @@ select.form-input { cursor: pointer; }
 
   <!-- MEMORY -->
   <div class="page" id="page-memory">
-    <div class="stat-grid">
-      <div class="stat-box"><div class="stat-val" id="m-beliefs">—</div><div class="stat-label">Beliefs</div></div>
-      <div class="stat-box"><div class="stat-val" id="m-memories">—</div><div class="stat-label">Memories</div></div>
-      <div class="stat-box"><div class="stat-val" id="m-goals">—</div><div class="stat-label">Goals</div></div>
+    <div class="stat-grid" style="grid-template-columns:1fr 1fr 1fr 1fr">
+      <div class="stat-box"><div class="stat-val" id="m-total">—</div><div class="stat-label">Total</div></div>
+      <div class="stat-box"><div class="stat-val" id="m-leaves">—</div><div class="stat-label">Memories</div></div>
+      <div class="stat-box"><div class="stat-val" id="m-clusters">—</div><div class="stat-label">Clusters</div></div>
+      <div class="stat-box"><div class="stat-val" id="m-size">—</div><div class="stat-label">DB Size</div></div>
     </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-inner" style="padding:10px 14px">
+        <div class="section-title" style="margin-bottom:8px">Fractal Hierarchy</div>
+        <div id="m-level-bars" style="font-size:12px"></div>
+      </div>
+    </div>
+
     <div class="search-bar">
-      <input class="search-input" id="mem-search" placeholder="Search Hermes memory…"
+      <input class="search-input" id="mem-search" placeholder="Semantic search…"
              onkeydown="if(event.key==='Enter')searchMemory()">
-      <button class="search-btn" onclick="searchMemory()">Go</button>
+      <button class="search-btn" onclick="searchMemory()">Search</button>
     </div>
-    <div id="mem-results">
-      <div class="section-title">Active Goals</div>
-      <div id="goals-list"></div>
+    <div id="mem-results" style="margin-bottom:14px"></div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div class="section-title" style="margin:0">Recent Memories</div>
+      <span id="m-live-ind" style="font-size:10px;color:var(--green);font-weight:700;display:none">● live</span>
+    </div>
+    <div id="mem-recent"></div>
+
+    <div style="margin-top:14px">
+      <div class="section-title">Store Memory</div>
+      <div class="search-bar">
+        <input class="search-input" id="mem-store-input" placeholder="Add a fact or insight to memory…"
+               onkeydown="if(event.key==='Enter')storeMemory()">
+        <button class="search-btn" onclick="storeMemory()">Store</button>
+      </div>
     </div>
   </div>
 
@@ -573,7 +596,7 @@ select.form-input { cursor: pointer; }
       <div class="section-title">Services</div>
       <div class="card"><div class="card-inner">
         <div class="sys-row"><span class="sys-key">Ollama</span><span class="sys-val" id="svc-ollama">checking…</span></div>
-        <div class="sys-row"><span class="sys-key">Hermes</span><span class="sys-val" id="svc-hermes">checking…</span></div>
+        <div class="sys-row"><span class="sys-key">Fractal Memory</span><span class="sys-val" id="svc-memory">checking…</span></div>
         <div class="sys-row"><span class="sys-key">WebSocket</span><span class="sys-val" id="svc-ws">—</span></div>
       </div></div>
     </div>
@@ -681,7 +704,7 @@ const QUICK_CONFIGS = [
       { id: 'output', label: 'Output format', type: 'select',
         opts: ['Executive summary','Technical writeup','Bullet action items','Comparison table','Code examples'] },
     ],
-    build: v => `${v.depth} research on: ${v.topic}. Output format: ${v.output}. Store all key findings, facts, and actionable insights in Hermes memory for future reference.`,
+    build: v => `${v.depth} research on: ${v.topic}. Output format: ${v.output}. Store all key findings, facts, and actionable insights in fractal memory for future reference.`,
   },
   {
     key: 'security',
@@ -776,9 +799,16 @@ function switchTab(tab) {
   document.getElementById(`page-${tab}`).classList.add('active');
   document.getElementById(`nav-${tab}`)?.classList.add('active');
   currentTab = tab;
-  if (tab === 'logs')     { unreadLogs = 0; updateLogBadge(); }
-  if (tab === 'memory')   loadMemoryStats();
-  if (tab === 'system')   loadSystemStats();
+  if (tab === 'logs')   { unreadLogs = 0; updateLogBadge(); }
+  if (tab === 'memory') {
+    loadMemoryStats();
+    clearInterval(_memRefreshTimer);
+    _memRefreshTimer = setInterval(loadMemoryStats, 5000);
+  } else {
+    clearInterval(_memRefreshTimer);
+    _memRefreshTimer = null;
+  }
+  if (tab === 'system') loadSystemStats();
   if (tab === 'flows')    loadFlows();
   if (tab === 'terminal') termRefreshFlowList();
 }
@@ -940,7 +970,7 @@ function _metaHtml(flow) {
       <span class="badge badge-${flow.status}">${isRunning?'<span class="dot-anim"></span> ':''}${flow.status}</span>
       <span style="font-size:13px;color:${tm.color};font-weight:600">${tm.emoji} ${tm.label}</span>
       <span style="font-size:12px;color:var(--text2)">⏱ ${dur}</span>
-      ${flow.hermes_items_stored ? `<span style="font-size:12px;color:var(--purple)">⬡ ${flow.hermes_items_stored}</span>` : ''}
+      ${flow.memory_items_stored ? `<span style="font-size:12px;color:var(--purple)">⬡ ${flow.memory_items_stored}</span>` : ''}
       ${flow.replan_count ? `<span style="font-size:12px;color:var(--yellow)">↻ ${flow.replan_count} replans</span>` : ''}
     </div>
     <div class="flow-objective">${esc(flow.objective||'')}</div>`;
@@ -989,7 +1019,7 @@ function _taskCardsHtml(flow) {
       </div>
       <div class="card-body" style="display:none">
         ${(t.subtasks||[]).map(s => renderSubtask(s)).join('')}
-        ${t.result ? `<div class="task-result">${esc(t.result.slice(0,600))}</div>` : ''}
+        ${t.result ? `<div style="margin:4px 14px 12px">${_resultBlockHtml(t.result, 'tr-' + t.id)}</div>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -997,15 +1027,25 @@ function _taskCardsHtml(flow) {
 
 // Surgical update — only patches meta + tasks panel, never touches transcript/files
 function patchFlowDetail(flow) {
+  const pageEl = document.getElementById('page-detail');
+  const savedScroll = pageEl ? pageEl.scrollTop : 0;
+
   const metaEl = document.getElementById(`flow-meta-${flow.id}`);
   const tasksEl = document.getElementById(`panel-tasks-${flow.id}`);
   if (!metaEl || !tasksEl) { renderFlowDetail(flow); return; }
 
   metaEl.innerHTML = _metaHtml(flow);
 
+  // Preserve open task cards and expanded result sections before rebuild
   const openCardIds = new Set();
   tasksEl.querySelectorAll('.card.open').forEach(c => openCardIds.add(c.id));
+  const expandedResults = new Set();
+  tasksEl.querySelectorAll('[id$="-rfull"]').forEach(el => {
+    if (el.style.display !== 'none') expandedResults.add(el.id.slice(0, -6));
+  });
+
   tasksEl.innerHTML = _taskCardsHtml(flow);
+
   openCardIds.forEach(id => {
     const card = document.getElementById(id);
     if (!card) return;
@@ -1013,13 +1053,24 @@ function patchFlowDetail(flow) {
     const body = card.querySelector('.card-body');
     if (body) body.style.display = 'block';
   });
+  expandedResults.forEach(id => {
+    const shortEl = document.getElementById(`${id}-rshort`);
+    const fullEl  = document.getElementById(`${id}-rfull`);
+    if (shortEl && fullEl) { shortEl.style.display = 'none'; fullEl.style.display = ''; }
+  });
+
+  // Double rAF: first frame lets browser recalculate layout, second restores scroll
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (pageEl) pageEl.scrollTop = savedScroll;
+  }));
 }
 
 function renderFlowDetail(flow) {
-  // Reset tab caches when switching to a different flow
+  // Always reset tab caches: DOM is always rebuilt here so cached flags must clear.
+  // Only reset tab selection when switching to a different flow.
+  _transcriptLoaded = null;
+  _filesLoaded = null;
   if (_detailFlowId !== flow.id) {
-    _transcriptLoaded = null;
-    _filesLoaded = null;
     _currentDetailTab = 'tasks';
   }
   _detailFlowId = flow.id;
@@ -1055,6 +1106,30 @@ function renderFlowDetail(flow) {
   }
 }
 
+function _resultBlockHtml(result, baseId) {
+  if (!result) return '';
+  const PREVIEW = 500;
+  if (result.length <= PREVIEW) {
+    return `<div class="subtask-result">${esc(result)}</div>`;
+  }
+  const id = baseId.replace(/[^a-zA-Z0-9]/g, '_');
+  return `<div class="subtask-result" id="${id}-rshort">${esc(result.slice(0, PREVIEW))}
+    <button class="result-expand-btn" onclick="toggleResultBlock('${id}')">▼ show full output (${result.length} chars)</button>
+  </div>
+  <div class="subtask-result" id="${id}-rfull" style="display:none">${esc(result)}
+    <button class="result-expand-btn" onclick="toggleResultBlock('${id}')">▲ collapse</button>
+  </div>`;
+}
+
+function toggleResultBlock(id) {
+  const shortEl = document.getElementById(`${id}-rshort`);
+  const fullEl  = document.getElementById(`${id}-rfull`);
+  if (!shortEl || !fullEl) return;
+  const expanding = fullEl.style.display === 'none';
+  shortEl.style.display = expanding ? 'none' : '';
+  fullEl.style.display  = expanding ? '' : 'none';
+}
+
 function renderSubtask(s) {
   const icons = {finished:'✓', superseded:'↪', failed:'✗', running:'●', created:'○', retrying:'↻'};
   const icols = {finished:'var(--green)', failed:'var(--red)', running:'var(--accent)',
@@ -1068,7 +1143,7 @@ function renderSubtask(s) {
     <div class="subtask-body">
       <div class="subtask-title">${esc(s.title)}${retryBadge}</div>
       <div class="subtask-agent" style="color:${ac}">${s.agent}</div>
-      ${s.result ? `<div class="subtask-result">${esc(s.result.slice(0,400))}</div>` : ''}
+      ${_resultBlockHtml(s.result, s.id || s.title)}
     </div>
   </div>`;
 }
@@ -1176,35 +1251,119 @@ async function termExec() {
 }
 
 // ── MEMORY ──
+let _memRefreshTimer = null;
+
 async function loadMemoryStats() {
-  const stats = await fetch(`${API}/api/memory/stats`).then(r=>r.json()).catch(()=>null);
+  const [stats, recent] = await Promise.all([
+    fetch(`${API}/api/memory/stats`).then(r=>r.json()).catch(()=>null),
+    fetch(`${API}/api/memory/recent?limit=25`).then(r=>r.json()).catch(()=>[]),
+  ]);
   if (stats) {
-    document.getElementById('m-beliefs').textContent  = fmtNum(stats.beliefs);
-    document.getElementById('m-memories').textContent = fmtNum(stats.memories);
-    document.getElementById('m-goals').textContent    = fmtNum(stats.goals);
+    const byLevel = stats.by_level || {};
+    const leaves   = byLevel[0] || 0;
+    const clusters = Object.entries(byLevel).filter(([k])=>k!=='0').reduce((s,[,v])=>s+v,0);
+    document.getElementById('m-total').textContent   = fmtNum(stats.total_nodes || 0);
+    document.getElementById('m-leaves').textContent  = fmtNum(leaves);
+    document.getElementById('m-clusters').textContent = fmtNum(clusters);
+    document.getElementById('m-size').textContent    = stats.db_size_kb ? (stats.db_size_kb/1024).toFixed(1)+'MB' : '—';
+
+    const levelsEl = document.getElementById('m-level-bars');
+    const levelNames = {0:'Memories (L0)', 1:'Concepts (L1)', 2:'Domains (L2)', 3:'Meta (L3)', 4:'Root (L4)'};
+    const maxCount = Math.max(...Object.values(byLevel), 1);
+    levelsEl.innerHTML = Object.entries(byLevel).sort((a,b)=>a[0]-b[0]).map(([lvl, cnt]) => {
+      const pct = Math.round(cnt / maxCount * 100);
+      const colors = ['var(--accent)','var(--green)','var(--purple)','var(--orange)','var(--yellow)'];
+      const col = colors[parseInt(lvl)] || 'var(--text2)';
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+        <span style="width:95px;font-size:11px;color:var(--text2);flex-shrink:0">${levelNames[lvl]||'L'+lvl}</span>
+        <div style="flex:1;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${col};border-radius:4px"></div>
+        </div>
+        <span style="font-size:11px;color:${col};font-weight:700;width:32px;text-align:right">${fmtNum(cnt)}</span>
+      </div>`;
+    }).join('');
   }
-  const goals = await fetch(`${API}/api/memory/goals`).then(r=>r.json()).catch(()=>[]);
-  document.getElementById('goals-list').innerHTML = goals.slice(0,8).map(g => `
-    <div class="goal-item">
-      <div>${esc(g.title)}</div>
-      <div class="priority">priority ${g.priority?.toFixed(2)||'—'}</div>
-    </div>`).join('') || '<div style="color:var(--text2);font-size:13px">No goals</div>';
+
+  // Recent memories
+  const recEl = document.getElementById('mem-recent');
+  if (!recent.length) {
+    recEl.innerHTML = '<div class="empty" style="padding:24px 0"><div style="font-size:12px;color:var(--text2)">No memories yet — run a flow to start building the fractal tree</div></div>';
+  } else {
+    recEl.innerHTML = recent.map(r => {
+      const lineage = (r.lineage||[]).slice(1,-1).map(n=>(n.label||'').slice(0,30)).filter(Boolean);
+      const breadcrumb = lineage.length ? `<div style="font-size:10px;color:var(--text2);margin-top:3px;font-family:monospace">⬡ ${esc(lineage.join(' › '))}</div>` : '';
+      const tags = (r.tags||[]).filter(t=>t!=='belief').slice(0,3);
+      const tagHtml = tags.map(t=>`<span style="font-size:10px;background:var(--bg3);border:1px solid var(--border);padding:1px 6px;border-radius:10px;color:var(--text2)">${esc(t)}</span>`).join(' ');
+      const isNew = (Date.now()/1000 - (r.created_at||0)) < 60;
+      return `<div class="memory-item" style="${isNew?'border-color:var(--green);':''}" onclick="memSearchByContent(${r.id})">
+        ${isNew?'<span style="font-size:9px;color:var(--green);font-weight:700;text-transform:uppercase;letter-spacing:.5px">NEW</span><br>':''}
+        <div class="memory-content">${esc((r.content||'').slice(0,200))}</div>
+        ${breadcrumb}
+        <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
+          ${tagHtml}
+          ${r.flow_id ? `<span style="font-size:10px;color:var(--text2);font-family:monospace">${esc(r.flow_id.slice(0,8))}</span>` : ''}
+          ${r.access_count > 0 ? `<span style="font-size:10px;color:var(--text2)">↑${r.access_count}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    document.getElementById('m-live-ind').style.display = '';
+    setTimeout(()=>{ const el=document.getElementById('m-live-ind'); if(el) el.style.display='none'; }, 3000);
+  }
 }
+
 async function searchMemory() {
   const q = document.getElementById('mem-search').value.trim();
-  if (!q) return;
+  if (!q) { document.getElementById('mem-results').innerHTML = ''; return; }
+  document.getElementById('mem-results').innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">Searching…</div>';
   const results = await fetch(`${API}/api/memory/search?q=${encodeURIComponent(q)}`).then(r=>r.json()).catch(()=>[]);
   const el = document.getElementById('mem-results');
   if (!results.length) {
-    el.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:16px 0">No results</div>';
+    el.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px 0">No results</div>';
     return;
   }
-  el.innerHTML = results.map(r => `
-    <div class="memory-item">
-      <div class="memory-type" style="color:${r.type==='belief'?'var(--purple)':'var(--accent)'}">${r.type}</div>
-      <div class="memory-content">${esc((r.content||'').slice(0,250))}</div>
-      ${r.confidence!=null ? `<div class="memory-conf">confidence: ${(r.confidence*100).toFixed(0)}%</div>` : ''}
-    </div>`).join('');
+  el.innerHTML = `<div class="section-title" style="margin-bottom:8px">Search Results (${results.length})</div>` + results.map(r => {
+    const lineage = (r.lineage||[]).slice(0,-1).map(n=>(n.label||'').slice(0,28)).filter(Boolean);
+    const breadcrumb = lineage.length ? `<div style="font-size:10px;color:var(--text2);margin-top:4px;font-family:monospace">⬡ ${esc(lineage.join(' › '))}</div>` : '';
+    const score = r.score || 0;
+    const scoreColor = score > 0.75 ? 'var(--green)' : score > 0.55 ? 'var(--accent)' : 'var(--text2)';
+    return `<div class="memory-item">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;font-weight:700;color:${scoreColor}">relevance ${(score*100).toFixed(0)}%</span>
+        ${r.flow_id ? `<span style="font-size:10px;color:var(--text2);font-family:monospace">${esc(r.flow_id.slice(0,8))}</span>` : ''}
+      </div>
+      <div class="memory-content">${esc(r.content||'')}</div>
+      ${breadcrumb}
+    </div>`;
+  }).join('');
+}
+
+async function memSearchByContent(id) {
+  // Tap on a recent memory → show its similar neighbours
+  document.getElementById('mem-search').value = '';
+  document.getElementById('mem-results').innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">Loading related memories…</div>';
+  const row = await fetch(`${API}/api/flows`).then(()=>null).catch(()=>null);
+  // fallback: just clear
+  document.getElementById('mem-results').innerHTML = '';
+}
+
+async function storeMemory() {
+  const inp = document.getElementById('mem-store-input');
+  const content = inp.value.trim();
+  if (!content) return;
+  inp.disabled = true;
+  const res = await fetch(`${API}/api/memory/store`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ content, tags: ['manual'] }),
+  }).then(r=>r.json()).catch(()=>null);
+  inp.disabled = false;
+  if (res?.ok) {
+    inp.value = '';
+    toast('Stored in fractal memory ✓');
+    loadMemoryStats();
+  } else {
+    toast('Store failed');
+  }
 }
 
 // ── SYSTEM ──
@@ -1286,9 +1445,11 @@ async function loadSystemStats() {
     const oe = document.getElementById('svc-ollama');
     oe.textContent = status.ollama.ok ? `✓ running (${status.ollama.models} models)` : '✗ unreachable';
     oe.style.color = status.ollama.ok ? 'var(--green)' : 'var(--red)';
-    const he = document.getElementById('svc-hermes');
-    he.textContent = status.hermes.ok ? '✓ connected' : '✗ unreachable';
-    he.style.color = status.hermes.ok ? 'var(--green)' : 'var(--red)';
+    const me = document.getElementById('svc-memory');
+    if (me && status.memory) {
+      me.textContent = status.memory.ok ? `✓ ${fmtNum(status.memory.total_nodes)} nodes` : '✗ error';
+      me.style.color = status.memory.ok ? 'var(--green)' : 'var(--red)';
+    }
   }
 }
 
@@ -1568,8 +1729,13 @@ async function loadExplorer(flowId) {
   _explorerFlowId = flowId;
   const body = document.getElementById(`files-body-${flowId}`);
   if (!body) return;
+  body.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">Loading files…</div>';
   const files = await fetch(`${API}/api/flows/${flowId}/workspace`).then(r=>r.json()).catch(()=>null);
-  if (!files) { body.innerHTML = '<div style="color:var(--red)">Failed to load files</div>'; return; }
+  if (!files) {
+    _filesLoaded = null;  // allow retry on next tab click
+    body.innerHTML = '<div style="color:var(--red);font-size:13px;padding:12px 0">Failed to load files — tap Files to retry</div>';
+    return;
+  }
   body.innerHTML = buildFileTreeHtml(flowId, files);
 }
 
@@ -1597,6 +1763,7 @@ function buildFileTreeHtml(flowId, files) {
       <button class="file-viewer-back" onclick="closeFileViewer('${flowId}')">‹ Files</button>
       <span class="file-viewer-path" id="viewer-path-${flowId}"></span>
       <button class="file-viewer-copy" onclick="copyFileContent('${flowId}')">Copy</button>
+      <button class="file-viewer-copy" onclick="downloadFile('${flowId}')">⬇ Save</button>
     </div>
     <div id="viewer-content-${flowId}"></div>
   </div>`;
@@ -1651,7 +1818,24 @@ function copyFileContent(flowId) {
 }
 
 function downloadZip(flowId) {
-  window.location.href = `${API}/api/flows/${flowId}/download`;
+  const a = document.createElement('a');
+  a.href = window.location.origin + '/api/flows/' + flowId + '/download';
+  a.download = 'ollamagi-' + flowId + '.zip';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function downloadFile(flowId) {
+  const pathEl = document.getElementById(`viewer-path-${flowId}`);
+  if (!pathEl || !pathEl.textContent) return;
+  const path = pathEl.textContent;
+  const a = document.createElement('a');
+  a.href = window.location.origin + '/api/flows/' + flowId + '/rawfile?path=' + encodeURIComponent(path);
+  a.download = path.split('/').pop();
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 // ── INIT ──

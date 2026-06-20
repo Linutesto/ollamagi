@@ -2,7 +2,7 @@
 
 **Local-first autonomous agent platform powered by Ollama.**
 
-OllamAGI turns any machine with a GPU into a self-contained AI agent that can plan, code, research, scrape, and deploy — all without sending your data to a cloud API. Give it an objective; it breaks the work into tasks, spins up Docker containers, executes code, retries failures automatically, and feeds everything it learns back into a persistent memory system.
+OllamAGI turns any machine with a GPU into a self-contained AI agent that can plan, code, research, scrape, and deploy — all without sending your data to a cloud API. Give it an objective; it breaks the work into tasks, spins up Docker containers, executes code, retries failures automatically, and feeds everything it learns back into a persistent fractal memory system.
 
 ---
 
@@ -13,8 +13,8 @@ Most AI agent frameworks assume cloud LLMs. OllamAGI is built from the ground up
 - Zero API costs — your GPU does the work
 - No data leaves your machine
 - Works offline
-- Mobile-accessible dashboard over SSH tunnel
-- Deep memory via [Hermes](docs/architecture.md#hermes-memory) (optional but powerful)
+- Mobile-accessible dashboard over Tailscale or SSH tunnel
+- Self-organizing fractal memory that improves with every flow
 
 ---
 
@@ -28,7 +28,7 @@ Most AI agent frameworks assume cloud LLMs. OllamAGI is built from the ground up
 | **Replanner** | 2 consecutive task failures trigger LLM replanning of remaining tasks |
 | **Steer** | Inject a prompt mid-flow to redirect agents without stopping |
 | **Instant stop** | Stop any flow within ~500ms — doesn't wait for the current LLM call |
-| **Hermes memory** | Completed tasks feed beliefs back into a 100-table SQLite brain |
+| **Fractal memory** | Self-organizing SQLite memory with semantic search, beam retrieval, and live dashboard tab |
 | **Mobile dashboard** | Full-featured mobile web UI, works over SSH tunnel from Termux |
 | **Live terminal** | Execute commands in agent containers from the dashboard |
 | **Token tracking** | Per-flow and session-level token usage with reset button |
@@ -41,12 +41,14 @@ Most AI agent frameworks assume cloud LLMs. OllamAGI is built from the ground up
 ┌─────────────────────────────────────────────────────────┐
 │  Web Dashboard (mobile-first SPA)                       │
 │  WebSocket live updates · Stop · Steer · Terminal       │
+│  Memory tab: hierarchy · search · live recent feed      │
 ├─────────────────────────────────────────────────────────┤
-│  FastAPI Server  (port 7654)                            │
+│  FastAPI Server  (default port 8000)                    │
 ├─────────────────────────────────────────────────────────┤
 │  Orchestrator                                           │
 │  Flow → Tasks → Subtasks                                │
 │  Model router · Auto-fix · Replan · Memory distill      │
+│  (distills facts after every text subtask + task end)   │
 ├─────────────────────────────────────────────────────────┤
 │  Agent Roles                                            │
 │  primary_agent · architect · coder · researcher         │
@@ -56,13 +58,16 @@ Most AI agent frameworks assume cloud LLMs. OllamAGI is built from the ground up
 │  Docker containers (python / debian / kali)             │
 │  SSH host access · /work bind-mount                     │
 ├─────────────────────────────────────────────────────────┤
-│  Memory (optional)                                      │
-│  Hermes SQLite — beliefs, memories, goals, RAG          │
+│  Fractal Memory  (core/fractal_memory.py)               │
+│  L0 leaves → L1 concepts → L2 domains → L3/L4 meta     │
+│  mxbai-embed-large · cosine clustering · FTS5 fallback  │
+│  context_for_task() injects prior knowledge into prompts│
 └─────────────────────────────────────────────────────────┘
          ↕  Ollama  (local, port 11434)
+         ↕  SearxNG (local, port 4000)
 ```
 
-See [docs/architecture.md](docs/architecture.md) for full detail.
+See [docs/FRACTAL_MEMORY_WHITEPAPER.md](docs/FRACTAL_MEMORY_WHITEPAPER.md) for the full memory system deep-dive.
 
 ---
 
@@ -90,22 +95,20 @@ pip3 install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set MODEL_ORCHESTRATOR to a model you have pulled
+# Edit .env — set MODEL_SINGLE to the model used by every agent role
 ```
 
 ### 3. Pull an Ollama model
 
 ```bash
-ollama pull qwen2.5:7b        # minimum viable (fast, lower quality)
-ollama pull qwen2.5:32b       # recommended orchestrator
-ollama pull qwen2.5-coder:32b # recommended for code tasks
+ollama pull vaultbox/qwen3.5-uncensored:27b
 ```
 
 ### 4. Start
 
 ```bash
-python3 ollamagi.py serve
-# Dashboard: http://localhost:7654
+python3 ollamagi.py serve --port 8000
+# Dashboard: http://localhost:8000
 ```
 
 ### 5. Health check
@@ -128,13 +131,19 @@ This installs: Python, Docker, Ollama, creates the agent SSH key, and prints nex
 
 ## Mobile Access (Termux / Android)
 
-OllamAGI is designed to be used from a phone. In Termux:
+OllamAGI is designed to be used from a phone.
 
+**Via Tailscale** (recommended — no tunnel needed):
 ```bash
-ssh -L 7654:localhost:7654 youruser@yourserver -N
+# Just open the Tailscale IP in your browser, e.g.:
+http://100.x.x.x:8000
 ```
 
-Then open `http://localhost:7654` in your mobile browser.
+**Via SSH tunnel** from Termux:
+```bash
+ssh -L 8000:localhost:8000 youruser@yourserver -N
+# Then open http://localhost:8000
+```
 
 See [docs/mobile-first.md](docs/mobile-first.md) for the full workflow.
 
@@ -157,11 +166,33 @@ SSH_USER=youruser
 
 ---
 
-## Hermes Memory (optional)
+## Fractal Memory
 
-OllamAGI integrates with Hermes — a 100-table SQLite cognitive memory system. Every completed task extracts beliefs that inform future flows.
+OllamAGI ships with a built-in self-organizing memory system (`core/fractal_memory.py`). Every completed task — and every text subtask — distills 1-3 reusable facts via LLM and stores them as leaf nodes in a fractal SQLite tree:
 
-Hermes is **optional** — OllamAGI works without it. If `HERMES_DB` points to a non-existent file, memory features are silently disabled.
+```
+L0  raw memories  (facts, code snippets, observations)
+L1  concept clusters
+L2  domain clusters
+L3  meta clusters
+L4  root
+```
+
+Nodes are placed by cosine similarity (`mxbai-embed-large`, JOIN_THRESH=0.52). Overgrown clusters split by k-means. Queries use direct leaf scan for collections under 2 000 entries (~83% P@1), falling back to beam search for larger DBs.
+
+The **Memory tab** on the dashboard shows the live hierarchy, recent memories with lineage breadcrumbs, and a semantic search box.
+
+```python
+from core.fractal_memory import context_for_task, insert
+
+# Inject relevant prior knowledge into any agent prompt
+ctx = context_for_task("build a FastAPI microservice with auth")
+
+# Store a fact manually
+insert("argon2-cffi is the recommended password hasher for Python", tags=["security"])
+```
+
+See [docs/FRACTAL_MEMORY_WHITEPAPER.md](docs/FRACTAL_MEMORY_WHITEPAPER.md) for benchmarks and design rationale.
 
 ---
 
@@ -169,16 +200,13 @@ Hermes is **optional** — OllamAGI works without it. If `HERMES_DB` points to a
 
 ```bash
 # Start the dashboard
-python3 ollamagi.py serve [--port 7654]
+python3 ollamagi.py serve [--port 8000]
 
 # Run a flow from the command line
 python3 ollamagi.py run "Build a REST API for todo management"
 
 # Launch a bug bounty flow
 python3 ollamagi.py bounty example.com --platform hackerone
-
-# Query Hermes memory
-python3 ollamagi.py memory "web scraping techniques"
 ```
 
 ---
@@ -205,10 +233,7 @@ All config is via environment variables. See [`.env.example`](.env.example) for 
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `OLLAMA_CTX` | `32768` | Context window tokens |
-| `MODEL_ORCHESTRATOR` | `qwen2.5:32b` | Planning/reasoning model |
-| `MODEL_CODER` | `qwen2.5-coder:32b` | Code generation model |
-| `MODEL_FAST` | `qwen2.5:7b` | Fast/cheap calls |
-| `HERMES_DB` | `~/.hermes/cognitive_memory.sqlite` | Hermes memory path |
+| `MODEL_SINGLE` | `vaultbox/qwen3.5-uncensored:27b` | Model used for all agent roles |
 | `SSH_KEY` | `~/.ssh/ollamagi_agent` | Agent SSH key |
 | `SSH_HOST` | `172.17.0.1` | Host IP from inside containers |
 | `SSH_USER` | `$USER` | SSH username |

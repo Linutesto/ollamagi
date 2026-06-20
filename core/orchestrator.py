@@ -15,10 +15,9 @@ from pathlib import Path
 
 from core.config import WORKSPACE_DIR, MAX_TASK_TIMEOUT
 from core.agents import run_agent, FLOW_TYPE_ROLES, normalize_role_name
-from core.memory_bridge import context_for_task, store_belief
+from core.fractal_memory import context_for_task, store_from_result as store_belief
 from core.model_router import chat, get_tokens, cancel_flow, register_stop_event, register_llm_callback, FlowStoppedException, interruptible_sleep
 from executor.docker_manager import create_container, exec_script, exec_python, stop_container, sync_workspace
-from memory.extractor import extract_and_store
 
 MAX_RETRIES = 2  # auto-fix attempts per subtask before giving up
 MAX_AUTO_REPLANS = 2
@@ -69,7 +68,7 @@ class Flow:
     status: str = "created"   # created|running|stopped|finished|failed
     created_at: float = field(default_factory=time.time)
     finished_at: float | None = None
-    hermes_items_stored: int = 0
+    memory_items_stored: int = 0
     replan_count: int = 0
     repair_count: int = 0
     error: str = ""
@@ -218,7 +217,7 @@ def _flow_to_dict(flow: Flow) -> dict:
         "status": flow.status,
         "created_at": flow.created_at,
         "finished_at": flow.finished_at,
-        "hermes_items_stored": flow.hermes_items_stored,
+        "memory_items_stored": flow.memory_items_stored,
         "replan_count": flow.replan_count,
         "repair_count": flow.repair_count,
         "error": flow.error,
@@ -1229,7 +1228,7 @@ print(f"Runtime smoke test passed for {entry.name} using {mode} with external ne
 
 
 # ── Planning ──────────────────────────────────────────────────────────────────
-def _generate_tasks(flow: Flow, hermes_ctx: str) -> list[Task]:
+def _generate_tasks(flow: Flow, mem_ctx: str) -> list[Task]:
     roles = FLOW_TYPE_ROLES.get(flow.flow_type, FLOW_TYPE_ROLES["general"])
     role_list = ", ".join(roles)
     system = (
@@ -1237,16 +1236,16 @@ def _generate_tasks(flow: Flow, hermes_ctx: str) -> list[Task]:
         f"Available agents: {role_list}\n"
         "Return ONLY valid JSON array with keys: id(int), title, description, agent, "
         "needs_container(bool), container_type('pentest'|'python'|'generic')\n"
-        "3-5 tasks. Concrete and actionable. The user objective is authoritative; Hermes memory is "
-        "optional context and must not add infrastructure or requirements the user did not request.\n"
+        "3-5 tasks. Concrete and actionable. The user objective is authoritative; memory context is "
+        "optional and must not add infrastructure or requirements the user did not request.\n"
         "For agent-development flows always include implementation, persistent dependencies, README, "
         "and one deterministic offline self-test task. Avoid redundant architecture/refinement passes.\n"
         f"NON-NEGOTIABLE CONSTRAINTS:\n{_objective_constraints(flow.objective, flow.flow_type)}\n"
         "No markdown."
     )
     user_parts = [f"OBJECTIVE: {flow.objective}"]
-    if hermes_ctx:
-        user_parts.append(hermes_ctx)
+    if mem_ctx:
+        user_parts.append(mem_ctx)
     raw = chat(
         [{"role": "system", "content": system},
          {"role": "user", "content": "\n\n".join(user_parts)}],
@@ -1273,7 +1272,7 @@ def _generate_tasks(flow: Flow, hermes_ctx: str) -> list[Task]:
     return tasks
 
 
-def _generate_subtasks(task: Task, flow: Flow, hermes_ctx: str) -> list[Subtask]:
+def _generate_subtasks(task: Task, flow: Flow, mem_ctx: str) -> list[Subtask]:
     roles = FLOW_TYPE_ROLES.get(flow.flow_type, FLOW_TYPE_ROLES["general"])
     system = (
         "You are the Generator agent. Break this task into 2-5 concrete subtasks.\n"
@@ -1295,7 +1294,7 @@ def _generate_subtasks(task: Task, flow: Flow, hermes_ctx: str) -> list[Subtask]
         "Use needs_container=false for planning, analysis, synthesis, and advice.\n"
         "Use agent='coder' and container_type='python' for scripts, web requests, parsing, "
         "file generation, or structured-data transformations.\n"
-        "Do not add a subtask that writes directly to Hermes; the orchestrator stores memory.\n"
+        "Do not add a subtask that writes directly to memory; the orchestrator handles that.\n"
         "For applications that normally need credentials or live services, require deterministic "
         "paper/dry-run behavior with mock fixtures or public unauthenticated endpoints.\n"
         "Never invent API hostnames, credentials, or require live authenticated trading during build validation.\n"
@@ -1308,8 +1307,8 @@ def _generate_subtasks(task: Task, flow: Flow, hermes_ctx: str) -> list[Subtask]
         "No markdown."
     )
     user = f"TASK: {task.title}\n\nDESCRIPTION: {task.description}"
-    if hermes_ctx:
-        user += f"\n\n{hermes_ctx}"
+    if mem_ctx:
+        user += f"\n\n{mem_ctx}"
     raw = chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         task_type="orchestrator", flow_id=flow.id,
@@ -1549,7 +1548,7 @@ def _python_syntax_error(code: str) -> str | None:
 
 # ── Memory agent ──────────────────────────────────────────────────────────────
 def _memory_distill(flow_id: str, task_title: str, result: str) -> int:
-    """Extract key facts from a task result and store as Hermes beliefs."""
+    """Extract key facts from a task result and store in fractal memory."""
     if not result or len(result) < 60:
         return 0
     prompt = (
@@ -1574,7 +1573,7 @@ def _memory_distill(flow_id: str, task_title: str, result: str) -> int:
             count = 0
             for f in facts[:3]:
                 if isinstance(f, str) and len(f) > 20:
-                    store_belief(f, confidence=0.72, source=f"ollamagi:flow:{flow_id}")
+                    store_belief(f, flow_id=flow_id, confidence=0.72)
                     count += 1
             return count
     except Exception:
@@ -1586,7 +1585,7 @@ def _memory_distill(flow_id: str, task_title: str, result: str) -> int:
 def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
                      history: list[dict], log_fn: Callable,
                      flow_id: str | None = None) -> str:
-    hermes_ctx = context_for_task(subtask.description)
+    mem_ctx = context_for_task(subtask.description)
     deliverable_kind, expected_artifacts = _subtask_contract(subtask)
     contract_text = (
         f"DELIVERABLE CONTRACT: kind={deliverable_kind}; expected="
@@ -1599,8 +1598,8 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         f"{_objective_constraints(flow.objective, flow.flow_type)}\n"
         f"{_workspace_inventory(flow.id)}\n"
     )
-    if hermes_ctx:
-        extra_ctx += f"\n{hermes_ctx}"
+    if mem_ctx:
+        extra_ctx += f"\n{mem_ctx}"
 
     direct_bundle_targets = (
         expected_artifacts
@@ -1738,6 +1737,39 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         "    _sp.run([_sys.executable, '-m', 'pip', 'install', '--prefer-binary', '-q',\n"
         "             '-r', str(_req)], check=False, capture_output=True)\n"
         "del _sp, _sys, _pl, _req\n\n"
+        # web_search() helper: SearxNG primary (better quality, no rate-limits),
+        # DuckDuckGo as fallback. Agents just call web_search('query').
+        "def web_search(query, max_results=10, fetch_pages=False):\n"
+        "    import requests as _rq, json as _js\n"
+        "    results = []\n"
+        "    try:\n"
+        "        r = _rq.get('http://host.docker.internal:4000/search',\n"
+        "                    params={'q': query, 'format': 'json', 'language': 'en'},\n"
+        "                    timeout=12)\n"
+        "        results = [{'title': x.get('title',''), 'href': x.get('url',''),\n"
+        "                    'body': x.get('content','')} for x in r.json().get('results',[])][:max_results]\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    if not results:\n"
+        "        try:\n"
+        "            from duckduckgo_search import DDGS\n"
+        "            results = list(DDGS().text(query, max_results=max_results))\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "    if fetch_pages and results:\n"
+        "        import requests as _rq2\n"
+        "        from bs4 import BeautifulSoup as _BS\n"
+        "        for item in results:\n"
+        "            try:\n"
+        "                html = _rq2.get(item['href'], timeout=8,\n"
+        "                               headers={'User-Agent': 'Mozilla/5.0'}).text\n"
+        "                soup = _BS(html, 'lxml')\n"
+        "                for tag in soup(['script','style','nav','footer']):\n"
+        "                    tag.decompose()\n"
+        "                item['page_text'] = ' '.join(soup.get_text().split())[:4000]\n"
+        "            except Exception:\n"
+        "                item['page_text'] = ''\n"
+        "    return results\n\n"
     )
 
     if use_python:
@@ -1750,11 +1782,13 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             "selenium, webdriver-manager, duckduckgo-search.\n"
             "Any /work/requirements.txt present from earlier subtasks is automatically "
             "installed before your script runs — no need to pip-install those again.\n"
-            "WEB SEARCH: Use duckduckgo_search for any web research task:\n"
-            "  from duckduckgo_search import DDGS\n"
-            "  results = list(DDGS().text('your query here', max_results=10))\n"
+            "WEB SEARCH: A web_search() function is pre-injected into every script.\n"
+            "  results = web_search('your query here', max_results=10)\n"
             "  # Each result: {'title': str, 'href': str, 'body': str}\n"
-            "  # Also available: DDGS().news(), DDGS().answers()\n\n"
+            "  # To also fetch and extract the full page text of results:\n"
+            "  results = web_search('your query here', max_results=5, fetch_pages=True)\n"
+            "  # Then access result['page_text'] for full article content\n"
+            "  # Uses SearxNG (aggregates Google+Bing+DDG) with DuckDuckGo as fallback\n\n"
             "Rules:\n"
             "- Save ALL output files to /work/ using open('/work/filename', 'w')\n"
             "- You are writing a BUILD SCRIPT, not merely the final application body\n"
@@ -2033,9 +2067,9 @@ def run_flow(objective: str, flow_type: str | None = None,
     log(f"Flow {flow_id} started — type: {detected_type}")
     _save(flow)
 
-    hermes_ctx = context_for_task(objective)
-    if hermes_ctx:
-        log(f"Hermes: {len(hermes_ctx.splitlines())} relevant memories loaded")
+    mem_ctx = context_for_task(objective)
+    if mem_ctx:
+        log(f"Memory: {len(mem_ctx.splitlines())} relevant entries loaded")
 
     try:
         flow.status = "running"
@@ -2062,7 +2096,7 @@ def run_flow(objective: str, flow_type: str | None = None,
             log("primary_agent: decomposing objective…")
             for _attempt in range(3):
                 try:
-                    flow.tasks = _generate_tasks(flow, hermes_ctx)
+                    flow.tasks = _generate_tasks(flow, mem_ctx)
                     break
                 except (SystemExit, KeyboardInterrupt, FlowStoppedException):
                     raise
@@ -2106,7 +2140,7 @@ def run_flow(objective: str, flow_type: str | None = None,
             log(f"  generator: planning subtasks for '{task.title}'…")
             for _attempt in range(3):
                 try:
-                    task.subtasks = _generate_subtasks(task, flow, hermes_ctx)
+                    task.subtasks = _generate_subtasks(task, flow, mem_ctx)
                     break
                 except (SystemExit, KeyboardInterrupt, FlowStoppedException):
                     raise
@@ -2147,6 +2181,12 @@ def run_flow(objective: str, flow_type: str | None = None,
                         log(f"  reflector: {reflection[:200]}")
                     else:
                         log(f"  ✓ {subtask.title[:60]}")
+                        # Text agents produce rich knowledge — store immediately
+                        if not subtask.needs_container and subtask.result and len(subtask.result) > 80:
+                            _n = _memory_distill(flow_id, subtask.title, subtask.result)
+                            if _n:
+                                flow.memory_items_stored += _n
+                                log(f"  memory: {_n} fact(s) from {subtask.agent}")
                 except Exception as e:
                     subtask.result = str(e)
                     subtask.status = "failed"
@@ -2227,8 +2267,8 @@ def run_flow(objective: str, flow_type: str | None = None,
             if task.status == "finished":
                 n = _memory_distill(flow_id, task.title, task.result)
                 if n:
-                    flow.hermes_items_stored += n
-                    log(f"  memory agent: {n} belief(s) stored in Hermes")
+                    flow.memory_items_stored += n
+                    log(f"  memory agent: {n} belief(s) stored in fractal memory")
                 completed_tasks.append(task)
                 consecutive_failures = 0
             else:
@@ -2276,23 +2316,22 @@ def run_flow(objective: str, flow_type: str | None = None,
             _supersede_failed_attempts(flow)
         flow.status = "finished" if deliverables_valid else "failed"
 
-        # Only durable, fully validated flows may write final knowledge to Hermes.
+        # Store validated flow knowledge in fractal memory
         if flow.status == "finished":
-            log("Extracting validated knowledge into Hermes memory…")
-            from executor.task_runner import TaskResult
-            fake = [
-                TaskResult(task_id=i, title=r["task"], status=r["status"],
-                           exit_code=0, output=r["result"], duration=0)
-                for i, r in enumerate(all_results)
-            ]
+            log("Storing validated knowledge in fractal memory…")
             try:
-                n = extract_and_store(flow_id, objective, fake)
-                flow.hermes_items_stored += n
-                log(f"{n} more items stored in Hermes (total: {flow.hermes_items_stored})")
+                from core.fractal_memory import store_from_result
+                for r in all_results:
+                    if r.get("status") == "success" and r.get("result"):
+                        store_from_result(
+                            f"{r['task']}: {r['result'][:500]}",
+                            flow_id=flow_id,
+                            confidence=0.8,
+                        )
+                        flow.memory_items_stored += 1
+                log(f"Stored {flow.memory_items_stored} items in fractal memory")
             except Exception as e:
-                log(f"Hermes extraction skipped: {e}", "warn")
-        else:
-            log("Skipping final Hermes extraction because flow validation failed", "warn")
+                log(f"Fractal memory storage skipped: {e}", "warn")
 
         flow.finished_at = time.time()
         _save(flow)
