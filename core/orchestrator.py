@@ -262,14 +262,39 @@ def _flow_to_dict(flow: Flow) -> dict:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _detect_flow_type(objective: str) -> str:
     obj = objective.lower()
-    if any(w in obj for w in ["agent", "autonomous", "skill", "tool", "ai system", "bot"]):
-        return "agent_development"
-    if any(w in obj for w in ["product", "saas", "revenue", "monetize", "business", "roi", "sell"]):
-        return "product_development"
-    if any(w in obj for w in ["research", "analyze", "study", "explore", "discover", "map"]):
-        return "research"
-    if any(w in obj for w in ["pentest", "hack", "security", "vuln", "exploit", "bug bounty"]):
+    # Security first — unambiguous intent
+    if any(w in obj for w in ["pentest", "hack", "security audit", "vuln", "exploit", "bug bounty", "ctf"]):
         return "security"
+    # Agent/AI development — unambiguous intent
+    if any(w in obj for w in ["autonomous agent", "ai agent", "llm agent", "build an agent", "build a bot"]):
+        return "agent_development"
+    # Scraping/automation — check before product to avoid "scrape product prices" → product
+    if any(w in obj for w in ["scrape", "crawl", "automate", "automation", "scheduler", "workflow"]):
+        return "automation"
+    # Data engineering — check before general/research
+    if any(w in obj for w in ["pipeline", "etl", "dataset", "data engineering", "analytics", "transform data"]):
+        return "data_engineering"
+    # DevOps — unambiguous infra keywords
+    if any(w in obj for w in ["deploy", "kubernetes", "ci/cd", "devops", "infrastructure as code", "nginx config", "systemd unit"]):
+        return "devops"
+    # Content/writing
+    if any(w in obj for w in ["write a blog", "write an article", "write a report", "write documentation", "write a whitepaper", "write a readme"]):
+        return "content"
+    # Research — check before product to avoid "research the top SaaS models" → product
+    if any(w in obj for w in ["research ", "analyze ", "study ", "explore ", "survey ", "compare "]):
+        return "research"
+    # Product/business — broader keywords last in high-intent group
+    if any(w in obj for w in ["product", "saas", "revenue", "monetize", "business", "roi", "sell", "startup"]):
+        return "product_development"
+    # Broader agent/tool/bot pattern
+    if any(w in obj for w in ["agent", "autonomous", "skill", "tool", "ai system", "llm", "chatbot"]):
+        return "agent_development"
+    # Broader infra patterns
+    if any(w in obj for w in ["docker", "monitoring", "systemd", "nginx"]):
+        return "devops"
+    # Broader content
+    if any(w in obj for w in ["write", "article", "blog", "documentation", "readme", "report", "whitepaper", "content"]):
+        return "content"
     return "general"
 
 def _strip_fences(text: str) -> str:
@@ -297,12 +322,16 @@ def _objective_constraints(objective: str, flow_type: str) -> str:
     """Deterministic guardrails that keep generated workflows locally testable."""
     lower = (objective or "").lower()
     rules = [
-        "Do not introduce Redis, PostgreSQL, Kafka, cloud services, browser daemons, or any other "
-        "external infrastructure unless the user explicitly requested it.",
+        "Do not introduce Redis, PostgreSQL, Kafka, cloud services, or browser daemons unless the "
+        "user explicitly requested them.",
         "Optional integrations must use an adapter/interface with an in-memory or local-file fallback.",
         "All validation must be deterministic and offline. Never require credentials, a running daemon, "
         "a public website, or a provider API.",
         "Every third-party runtime import must be declared in requirements.txt or pyproject.toml.",
+        "git is NOT pre-installed in Python containers. Install it before any git operation: "
+        "subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True). "
+        "Alternative: download a GitHub repo as ZIP via requests.get('https://codeload.github.com/{user}/{repo}/zip/refs/heads/main'). "
+        "GitHub repository names are case-sensitive — always verify the exact casing before cloning.",
     ]
     if flow_type == "agent_development":
         rules.append(
@@ -311,18 +340,49 @@ def _objective_constraints(objective: str, flow_type: str) -> str:
         )
     if flow_type == "research":
         rules.append(
-            "Research must produce a durable cited report or dataset. Individual unavailable sources "
-            "must be skipped and recorded rather than failing the whole workflow."
+            "Research must produce a durable cited report or dataset saved to /work/. "
+            "Individual unavailable sources must be skipped and recorded rather than failing the workflow."
         )
     if flow_type == "product_development":
         rules.append(
-            "Product work must end in a durable decision document with assumptions, risks, validation "
-            "steps, and a concrete next action."
+            "Product work must end in a durable decision document saved to /work/ with assumptions, "
+            "risks, validation steps, and a concrete next action."
         )
     if flow_type == "security":
         rules.append(
             "Operate only within explicit authorized scope. Tool errors, unreachable hosts, and empty "
             "findings are reportable outcomes, not reasons to omit the final assessment report."
+        )
+    if flow_type == "data_engineering":
+        rules.append(
+            "Data pipelines must process data in chunks/streams for large inputs. "
+            "Always validate input schema before transforming. Produce a data quality summary "
+            "(row counts, null rates, sample rows) alongside the output artifact."
+        )
+    if flow_type == "devops":
+        rules.append(
+            "All infrastructure configs must be idempotent. Secrets via environment variables only. "
+            "Every service must have a health check. Validate configs syntactically (nginx -t, "
+            "docker compose config --quiet) before declaring success."
+        )
+    if flow_type == "automation":
+        rules.append(
+            "Automation scripts must terminate after one bounded cycle during validation. "
+            "Never start an infinite polling loop or daemon during build/test. "
+            "Validate against local fixtures or public unauthenticated endpoints."
+        )
+    if flow_type == "content":
+        rules.append(
+            "Content must be saved as a file to /work/ (Markdown preferred). "
+            "Cite sources inline. Completeness over brevity — no placeholder sections."
+        )
+    if any(term in lower for term in ("git clone", "github", "gitlab", "clone", "repository", "repo")):
+        rules.append(
+            "Install git before use: subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True). "
+            "Always check that the cloned directory exists after git clone — 'fatal:' in output means the clone failed. "
+            "If the clone target directory already exists, skip cloning (idempotent). "
+            "Prefer HTTPS clones for public repos. For the OllamAGI repo: "
+            "https://github.com/Linutesto/ollamagi (lowercase — GitHub is case-sensitive)."
         )
     if any(term in lower for term in ("email", "smtp", "imap")):
         rules.append(
@@ -1479,6 +1539,11 @@ def _fix_python(code: str, error_output: str, description: str, flow_id: str | N
         "Fix this Python build script that failed. Return ONLY corrected Python code — no markdown.\n"
         "Preserve useful files already present in /work. The corrected build script must modify "
         "the actual deliverable source files in /work and use bounded offline/paper-mode validation.\n"
+        "GIT: If the error involves git/clone — git is NOT pre-installed. Add this before any git command:\n"
+        "  import subprocess; subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True)\n"
+        "  Then verify: assert pathlib.Path('/work/repo-name').is_dir(), 'clone failed'\n"
+        "  GitHub repo names are case-sensitive. OllamAGI: https://github.com/Linutesto/ollamagi\n"
+        "  If the directory already exists, skip cloning to stay idempotent.\n"
         "Persist every third-party dependency in /work/requirements.txt or pyproject.toml; installing "
         "a package only inside the temporary build container is not a deliverable. Match imports to "
         "the correct distribution (for example `from telegram ...` requires `python-telegram-bot`, "
@@ -1777,11 +1842,18 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             f"Write a Python 3 script that accomplishes this subtask:\n\n"
             f"{subtask.description}\n\n"
             f"{contract_text}\n\n"
-            "Environment: Python 3 container. Pre-installed: requests, httpx, aiohttp, rich, "
+            "Environment: Python 3.11 container. Pre-installed: requests, httpx, aiohttp, rich, "
             "beautifulsoup4, lxml, python-dotenv, pyyaml, toml, psutil, loguru, colorama, "
             "selenium, webdriver-manager, duckduckgo-search.\n"
             "Any /work/requirements.txt present from earlier subtasks is automatically "
             "installed before your script runs — no need to pip-install those again.\n"
+            "GIT: git is NOT pre-installed. Install it first when needed:\n"
+            "  import subprocess\n"
+            "  subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True)\n"
+            "  subprocess.run(['git','clone','https://github.com/user/repo','/work/repo'], check=True)\n"
+            "  assert pathlib.Path('/work/repo').is_dir(), 'clone failed'\n"
+            "  # To skip re-cloning if already present: if not Path('/work/repo').exists(): ...\n"
+            "  # GitHub repo names are CASE-SENSITIVE. OllamAGI repo: https://github.com/Linutesto/ollamagi\n\n"
             "WEB SEARCH: A web_search() function is pre-injected into every script.\n"
             "  results = web_search('your query here', max_results=10)\n"
             "  # Each result: {'title': str, 'href': str, 'body': str}\n"
