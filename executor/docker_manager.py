@@ -59,7 +59,8 @@ def create_container(flow_id: str, task_id: str, container_type: str = "python")
 # Common packages pre-installed so agents don't need to pip-install basics every run
 _COMMON_PACKAGES = (
     "uv requests httpx aiohttp python-dotenv rich colorama "
-    "beautifulsoup4 lxml pyyaml toml psutil loguru selenium webdriver-manager"
+    "beautifulsoup4 lxml pyyaml toml psutil loguru selenium webdriver-manager "
+    "duckduckgo-search"
 )
 
 def _bootstrap_python(container, container_type: str):

@@ -31,6 +31,14 @@ def register_llm_callback(flow_id: str, cb: Callable):
         _llm_counters[flow_id] = 0
 
 
+def _extract_thinking(text: str) -> tuple[str, str]:
+    """Extract <think>...</think> content from response text, return (thinking, clean_response)."""
+    import re
+    thinking_parts = re.findall(r'<think>(.*?)</think>', text, re.DOTALL)
+    clean = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    return "\n\n".join(thinking_parts), clean
+
+
 def _fire_llm_log(flow_id: str | None, messages: list, response: str,
                   task_type: str, model: str, prompt_tokens: int, completion_tokens: int,
                   thinking: str = ""):
@@ -251,6 +259,9 @@ def chat(messages: list[dict], task_type: str = "orchestrator",
         record_tokens(flow_id, pt, ct)
         response_text = data["message"]["content"]
         thinking_text = data["message"].get("thinking", "") or ""
+        # Also handle models that embed <think> tags in the content itself
+        if not thinking_text and "<think>" in response_text:
+            thinking_text, response_text = _extract_thinking(response_text)
         _fire_llm_log(flow_id, messages, response_text, task_type, model, pt, ct, thinking_text)
         return response_text
 
@@ -298,8 +309,13 @@ def chat(messages: list[dict], task_type: str = "orchestrator",
                     thinking_acc.append(val)
                 elif kind == "done":
                     pt, ct = val
-                    _fire_llm_log(flow_id, messages, "".join(accumulated),
-                                  task_type, model, pt, ct, "".join(thinking_acc))
+                    full_response = "".join(accumulated)
+                    full_thinking = "".join(thinking_acc)
+                    # Also handle <think> tags embedded in content
+                    if not full_thinking and "<think>" in full_response:
+                        full_thinking, full_response = _extract_thinking(full_response)
+                    _fire_llm_log(flow_id, messages, full_response,
+                                  task_type, model, pt, ct, full_thinking)
                     return
                 else:
                     raise val

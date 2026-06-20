@@ -1375,67 +1375,71 @@ function renderLlmCard(e) {
     ? `${fmtNum(e.prompt_tokens||0)}↑ ${fmtNum(e.completion_tokens||0)}↓` : '';
   const msgs = e.messages || [];
   const lastUser = [...msgs].reverse().find(m => m.role === 'user');
-  const snippet = (lastUser?.content || '').slice(0, 80).replace(/\n/g, ' ');
+  const snippet = (lastUser?.content || '').slice(0, 100).replace(/\n/g, ' ');
+  const hasThinking = !!(e.thinking && e.thinking.trim());
 
   let bodyHtml = '';
 
-  // 🧠 Thinking section — shown first, most prominent
-  if (e.thinking) {
-    const thinkId = id + '-think';
-    bodyHtml += `<div class="llm-msg" style="background:#0d1a0d">
-      <div class="llm-role" style="color:var(--green);cursor:pointer;display:flex;align-items:center;gap:6px"
-           onclick="toggleLlmCard('${thinkId}')">
-        <span>🧠 thinking</span><span style="font-size:10px;color:var(--text2)">(${e.thinking.length} chars)</span>
-        <span id="${thinkId}-chev" style="font-size:11px;color:var(--text2)">›</span>
-      </div>
-      <div id="${thinkId}" style="display:none">
-        <div class="llm-content" style="color:#7ec87e">${esc(e.thinking)}</div>
-      </div>
+  // 🧠 Thinking — always expanded, shown first
+  if (hasThinking) {
+    bodyHtml += `<div class="llm-msg" style="background:#0d1a0d;border-left:3px solid var(--green)">
+      <div class="llm-role" style="color:var(--green)">🧠 thinking (${e.thinking.length} chars)</div>
+      <div class="llm-content" style="color:#7ec87e">${esc(e.thinking)}</div>
     </div>`;
   }
 
-  // Messages
-  msgs.forEach(m => {
-    const roleCls = m.role === 'system' ? 'system' : m.role === 'user' ? 'user' : 'assistant';
+  // Messages (system collapsed by default — it's usually long boilerplate)
+  const sysMsg = msgs.find(m => m.role === 'system');
+  const otherMsgs = msgs.filter(m => m.role !== 'system');
+  if (sysMsg) {
+    const sysId = id + '-sys';
+    bodyHtml += `<div class="llm-msg" style="opacity:0.7">
+      <div class="llm-role system" style="cursor:pointer;display:flex;align-items:center;gap:6px"
+           onclick="document.getElementById('${sysId}').style.display=document.getElementById('${sysId}').style.display==='none'?'':'none'">
+        system <span style="font-size:10px;color:var(--text2)">(${(sysMsg.content||'').length} chars — click to expand)</span>
+      </div>
+      <div id="${sysId}" style="display:none">
+        <div class="llm-content">${esc(sysMsg.content || '')}</div>
+      </div>
+    </div>`;
+  }
+  otherMsgs.forEach(m => {
+    const roleCls = m.role === 'user' ? 'user' : 'assistant';
     bodyHtml += `<div class="llm-msg">
       <div class="llm-role ${roleCls}">${m.role}</div>
       <div class="llm-content">${esc(m.content || '')}</div>
     </div>`;
   });
 
-  // Response
+  // Response — highlighted, always shown
   if (e.response) {
-    bodyHtml += `<div class="llm-msg" style="background:#0a1525">
+    bodyHtml += `<div class="llm-msg" style="background:#0a1525;border-left:3px solid var(--accent)">
       <div class="llm-role assistant">⬅ response</div>
       <div class="llm-content" style="color:#79c0ff">${esc(e.response)}</div>
     </div>`;
   }
 
-  return `<div class="llm-card" id="${id}">
+  // Cards auto-open so content is immediately visible
+  return `<div class="llm-card open" id="${id}">
     <div class="llm-card-hdr" onclick="toggleLlmCard('${id}')">
       <span class="llm-badge ${typeClass}">${esc(e.task_type||'llm')}</span>
       <span class="llm-title">#${e.n||'?'} ${esc(snippet)}</span>
-      ${e.thinking ? '<span style="font-size:10px;color:var(--green)">🧠</span>' : ''}
+      ${hasThinking ? '<span style="font-size:10px;color:var(--green)">🧠</span>' : ''}
       <span class="llm-tok">${tok}</span>
-      <span class="llm-chevron">›</span>
+      <span class="llm-chevron" style="transform:rotate(90deg)">›</span>
     </div>
-    <div class="llm-body">${bodyHtml}</div>
+    <div class="llm-body" style="display:block">${bodyHtml}</div>
   </div>`;
 }
 
 function toggleLlmCard(id) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  // Check if it's a card or a sub-element
-  if (el.classList.contains('llm-card')) {
-    el.classList.toggle('open');
-  } else {
-    // It's the thinking sub-toggle
-    const isHidden = el.style.display === 'none';
-    el.style.display = isHidden ? '' : 'none';
-    const chev = document.getElementById(id + '-chev');
-    if (chev) chev.style.transform = isHidden ? 'rotate(90deg)' : '';
-  }
+  const card = document.getElementById(id);
+  if (!card) return;
+  const isOpen = card.classList.toggle('open');
+  const body = card.querySelector('.llm-body');
+  const chev = card.querySelector('.llm-chevron');
+  if (body) body.style.display = isOpen ? 'block' : 'none';
+  if (chev) chev.style.transform = isOpen ? 'rotate(90deg)' : '';
 }
 
 function _transcriptScrollEl(flowId) {
