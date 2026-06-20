@@ -8,9 +8,10 @@ import uvicorn
 
 def cmd_run(args):
     from core.orchestrator import run_flow
+    from core.config import WORKSPACE_DIR
     flow = run_flow(args.objective)
     print(f"\n[done] flow {flow.id} — {flow.status}")
-    print(f"[done] workspace: ~/.ollamagi/workspace/{flow.id}/")
+    print(f"[done] workspace: {WORKSPACE_DIR / flow.id}")
 
 def cmd_bounty(args):
     from flows.bug_bounty import BugBountyConfig, build_tasks, get_objective
@@ -46,7 +47,8 @@ def _cleanup_stale_flows():
             d = json.loads(f.read_text())
             if d.get("status") == "running":
                 d["status"] = "stopped"
-                d.setdefault("finished_at", time.time())
+                if not d.get("finished_at"):
+                    d["finished_at"] = time.time()
                 f.write_text(json.dumps(d, indent=2))
                 fixed += 1
         except Exception:
@@ -68,7 +70,7 @@ def cmd_memory(args):
             print(f"[{r['type'].upper()}] {r['content'][:120]}")
     else:
         goals = get_goals()
-        print(f"Active goals in Hermes: {len(goals)}")
+        print(f"Active goals: {len(goals)}")
         for g in goals[:5]:
             print(f"  • [{g['priority']}] {g['title']}")
 
@@ -89,7 +91,7 @@ def main():
     serve_p = sub.add_parser("serve", help="Start web dashboard")
     serve_p.add_argument("--port", type=int, default=7654)
 
-    mem_p = sub.add_parser("memory", help="Query Hermes memory")
+    mem_p = sub.add_parser("memory", help="Query cognitive memory")
     mem_p.add_argument("query", nargs="?", help="Search query")
 
     args = p.parse_args()

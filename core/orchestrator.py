@@ -320,19 +320,52 @@ def _role_for_flow(role_name: str, flow_type: str) -> str:
 
 def _objective_constraints(objective: str, flow_type: str) -> str:
     """Deterministic guardrails that keep generated workflows locally testable."""
+    import datetime as _dt
     lower = (objective or "").lower()
+    from core.config import SSH_HOST, SSH_USER
+    _now = _dt.datetime.now()
+    _today = _now.strftime("%Y-%m-%d")
+    _ts    = _now.strftime("%Y-%m-%d %H:%M")
     rules = [
+        f"CURRENT DATE/TIME: {_ts} (local). Always use this exact date in reports, logs, and "
+        f"filenames — never use a hardcoded or guessed date like 2023-10-27.",
         "Do not introduce Redis, PostgreSQL, Kafka, cloud services, or browser daemons unless the "
         "user explicitly requested them.",
         "Optional integrations must use an adapter/interface with an in-memory or local-file fallback.",
         "All validation must be deterministic and offline. Never require credentials, a running daemon, "
-        "a public website, or a provider API.",
+        "a public website, or a provider API. Exception: SSH to the pre-authorized host "
+        f"({SSH_HOST}, user {SSH_USER}) is always allowed — the key is at /root/.ssh/id_ed25519.",
         "Every third-party runtime import must be declared in requirements.txt or pyproject.toml.",
-        "git is NOT pre-installed in Python containers. Install it before any git operation: "
-        "subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True). "
-        "Alternative: download a GitHub repo as ZIP via requests.get('https://codeload.github.com/{user}/{repo}/zip/refs/heads/main'). "
-        "GitHub repository names are case-sensitive — always verify the exact casing before cloning.",
+        "git is NOT pre-installed in Python containers. Install it safely (apt-get update first, no check=True):\n"
+        "  subprocess.run(['apt-get','update','-qq'], capture_output=True)\n"
+        "  subprocess.run(['apt-get','install','-y','-qq','git'], capture_output=True)\n"
+        "Alternative (no apt needed): download a GitHub ZIP with requests.get('https://codeload.github.com/{user}/{repo}/zip/refs/heads/main').\n"
+        "GitHub repo names are case-sensitive. Never use check=True for apt-get commands.",
     ]
+    # System audit / host inspection objectives: inject SSH data-collection rule
+    _AUDIT_KEYWORDS = ("audit", "health report", "workstation", "system check", "inspect.*system",
+                       "performance issue", "storage issue", "service issue", "security issue")
+    if any(kw in lower for kw in _AUDIT_KEYWORDS):
+        rules.append(
+            f"HOST DATA COLLECTION: This task audits the local host ({SSH_HOST}). "
+            "The script runs inside a Debian container — do NOT run df/free/systemctl/journalctl directly "
+            "(those show container data, not host data). "
+            f"MUST collect all host metrics via SSH. Use paramiko (always pre-installed):\n"
+            f"  import paramiko, json, pathlib\n"
+            f"  client = paramiko.SSHClient()\n"
+            f"  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())\n"
+            f"  client.connect('{SSH_HOST}', username='{SSH_USER}', key_filename='/root/.ssh/id_ed25519', timeout=10)\n"
+            f"  def ssh(cmd):\n"
+            f"      _, out, err = client.exec_command(cmd, timeout=30)\n"
+            f"      return out.read().decode() + err.read().decode()\n"
+            f"  memory   = ssh('free -h')\n"
+            f"  disk     = ssh('df -h')\n"
+            f"  services = ssh('systemctl --failed --no-pager 2>&1 || true')\n"
+            f"  journal  = ssh('journalctl -p err -n 50 --no-pager 2>&1 || true')\n"
+            f"  security = ssh('last -n 20 2>&1; ss -tlnp 2>&1')\n"
+            f"  client.close()\n"
+            "Save all results to /work/ as .json. SSH key is pre-configured — no password needed."
+        )
     if flow_type == "agent_development":
         rules.append(
             "The final application must provide --self-test or --dry-run that exercises its core "
@@ -355,13 +388,15 @@ def _objective_constraints(objective: str, flow_type: str) -> str:
             f"SSH user: {SSH_USER}. SSH key at /root/.ssh/id_ed25519 is pre-configured.\n"
             "Security flows MUST follow this active pentest workflow — do NOT generate schema, "
             "documentation, or Python validation tasks:\n"
-            "  1. Reconnaissance — nmap port+OS scan, banner grabbing\n"
-            "  2. Enumeration — nikto on web ports, gobuster/ffuf for dirs, enum4linux for SMB\n"
-            "  3. Vulnerability assessment — nuclei, searchsploit, CVE lookup\n"
-            "  4. Exploitation — within authorized scope\n"
-            "  5. Report — executive summary with CVSS scores, PoC evidence, remediation steps\n"
-            "All tasks must use agent='pentester', needs_container=true, container_type='pentest'. "
-            "Tool errors and empty findings are valid reportable outcomes — never skip the final report."
+            "  1. Reconnaissance — nmap port+OS scan → reports/nmap.txt, reports/nmap.xml\n"
+            "  2. Enumeration — nikto + gobuster → reports/nikto.txt, reports/gobuster.txt\n"
+            "  3. Vulnerability assessment — nuclei + searchsploit → reports/nuclei.txt, reports/searchsploit.txt\n"
+            "  4. Exploitation — within authorized scope → reports/exploits.txt\n"
+            "  5. Report — executive summary with CVSS scores → reports/pentest_report.md\n"
+            "All tasks: agent='pentester', needs_container=true, container_type='pentest'.\n"
+            "ARTIFACT RULES: scan output must end in .txt or .xml — NEVER .json for raw tool output.\n"
+            "Scan tools (nmap/nikto/nuclei/gobuster/searchsploit) do NOT produce JSON natively.\n"
+            "Tool errors and empty findings are valid outcomes — never skip the final report."
         )
     if flow_type == "data_engineering":
         rules.append(
@@ -607,7 +642,30 @@ _DEPENDENCY_NAMES = {
 _DELIVERABLE_KINDS = {
     "auto", "text", "source", "documentation", "configuration",
     "dependency", "report", "dataset", "test", "artifact", "none",
+    "scan",  # pentest scan output — file must exist but empty = no findings (valid)
 }
+_PENTEST_SCAN_TOOLS_RE = re.compile(
+    r'\b(nmap|nikto|gobuster|ffuf|nuclei|searchsploit|masscan|enum4linux|'
+    r'whatweb|smbmap|hydra|sqlmap|wpscan|dirb|dirbuster|feroxbuster|nessus|'
+    r'openvas|metasploit|msfconsole|crackmapexec|rpcclient|smbclient)\b',
+    re.IGNORECASE,
+)
+_PENTEST_REPORT_KEYWORDS_RE = re.compile(
+    r'\b(report|summary|executive|compile|assign|cvss|remediation|assessment)\b',
+    re.IGNORECASE,
+)
+
+def _normalize_scan_artifacts(artifacts: list[str]) -> list[str]:
+    """Rewrite .json extensions to .txt for scan tool output — scan tools don't output JSON."""
+    result = []
+    for a in artifacts:
+        p = Path(a)
+        if p.suffix.lower() == '.json':
+            result.append(str(p.with_suffix('.txt')))
+        else:
+            result.append(a)
+    return result
+
 _TOOL_REQUIRED_PATTERN = re.compile(
     r"\b(inspect|read|open|analy[sz]e|review|check|verify|list|search)\b.*"
     r"\b(existing|workspace|file|code|codebase|script|artifact|directory|log)\b",
@@ -882,18 +940,22 @@ def _validate_execution(
     ]
 
     errors = []
+    kind, expected = _subtask_contract(subtask)
     for rel in meaningful:
+        # scan kind: empty output files are valid (means "no findings" — a legitimate result)
+        if kind == "scan":
+            continue
         error = _validate_artifact(WORKSPACE_DIR / flow_id / rel)
         if error:
             errors.append(f"/work/{rel}: {error}")
 
-    kind, expected = _subtask_contract(subtask)
     weak_output = not output.strip() or output.strip() in {"(done)", "done", "ok"}
     changed_paths = [Path(path) for path in meaningful]
     expected_changed = _matching_paths(changed_paths, expected)
     missing_expected = _missing_patterns(changed_paths, expected)
 
-    if missing_expected and kind not in {"test", "text", "none"}:
+    # scan kind: missing expected artifacts are still OK (tool ran, nothing to write is valid)
+    if missing_expected and kind not in {"test", "text", "none", "scan"}:
         errors.append(
             "expected artifact was not created or modified: "
             + ", ".join(f"/work/{path}" for path in missing_expected)
@@ -903,14 +965,16 @@ def _validate_execution(
         "report", "dataset", "artifact",
     } and not meaningful:
         errors.append("no deliverable file was created or modified")
+    elif kind == "scan" and weak_output and not meaningful:
+        errors.append("scan task produced no output and created no files — tool likely failed to run")
     elif kind == "test" and weak_output and not meaningful:
         errors.append("no artifact or meaningful verification output was produced")
-    elif kind not in {"text", "none"} and weak_output and not meaningful:
+    elif kind not in {"text", "none", "scan"} and weak_output and not meaningful:
         errors.append("execution produced no observable result")
 
     if kind in {
         "source", "documentation", "configuration", "dependency", "report", "dataset",
-    } and not expected_changed and not any(_kind_matches(kind, path) for path in changed_paths):
+    } and not expected_changed and not any(_kind_matches(kind, path) for path in changed_paths) and kind != "scan":
         messages = {
             "source": "task requires source code, but no source file was created or modified",
             "documentation": "task requires documentation, but no README or documentation file changed",
@@ -1407,9 +1471,14 @@ def _generate_tasks(flow: Flow, mem_ctx: str) -> list[Task]:
         from core.config import SSH_HOST, SSH_USER
         user_parts.append(
             f"TARGET: {SSH_HOST} (authorized Fedora host). SSH user: {SSH_USER}. "
-            "All tasks must be agent='pentester', needs_container=true, container_type='pentest'. "
-            "Generate ACTIVE testing tasks only: nmap recon, service enumeration, "
-            "vuln scanning, exploitation, report. NO schema/validation/documentation tasks."
+            "All tasks: agent='pentester', needs_container=true, container_type='pentest'. "
+            "Generate ACTIVE testing tasks only — NO schema/validation/Python tasks:\n"
+            "  Task 1: Recon — nmap full port scan + OS detection → reports/nmap.txt, reports/nmap.xml\n"
+            "  Task 2: Enumeration — nikto + gobuster on HTTP ports → reports/nikto.txt, reports/gobuster.txt\n"
+            "  Task 3: Vuln assessment — nuclei + searchsploit → reports/nuclei.txt, reports/searchsploit.txt\n"
+            "  Task 4: Exploitation — targeted exploits for found CVEs → reports/exploits.txt\n"
+            "  Task 5: Report — executive summary with CVSS scores → reports/pentest_report.md\n"
+            "IMPORTANT: All scan output paths end in .txt or .xml — NEVER .json"
         )
     if mem_ctx:
         user_parts.append(mem_ctx)
@@ -1448,7 +1517,9 @@ def _generate_subtasks(task: Task, flow: Flow, mem_ctx: str) -> list[Subtask]:
         "needs_container(bool), container_type('pentest'|'python'|'generic'), "
         "deliverable_kind, expected_artifacts(array of /work-relative paths or glob patterns).\n"
         "deliverable_kind must be exactly one of: text, source, documentation, configuration, "
-        "dependency, report, dataset, test, artifact, none.\n"
+        "dependency, report, dataset, test, artifact, none, scan.\n"
+        "Use scan for pentest tool output files (nmap, nikto, gobuster, nuclei, searchsploit) — "
+        "empty output is accepted as 'no findings found'.\n"
         "Use source only when that subtask must create/modify executable source code. "
         "Use documentation for README/Markdown/docs, dependency for requirements/pyproject/package "
         "manifests, configuration for config files, report for prose findings, dataset for scraped "
@@ -1481,8 +1552,17 @@ def _generate_subtasks(task: Task, flow: Flow, mem_ctx: str) -> list[Subtask]:
             f"needs_container=true, container_type='pentest'. "
             f"TARGET HOST: {SSH_HOST} (SSH user: {SSH_USER}). "
             "Generate subtasks that run actual Kali tools (nmap, nikto, nuclei, gobuster, etc.) "
-            "against the target. Each subtask should have deliverable_kind='report' or 'artifact' "
-            "with expected_artifacts pointing to scan output files in /work/."
+            "against the target. "
+            "DELIVERABLE KINDS:\n"
+            "  - Scan tool subtasks (nmap, nikto, gobuster, nuclei, searchsploit): deliverable_kind='scan'\n"
+            "  - Final summary/report subtask only: deliverable_kind='report'\n"
+            "EXPECTED ARTIFACTS — STRICT RULES:\n"
+            "  - Scan tools output TEXT, not JSON. ALL scan artifact paths MUST end in .txt or .xml.\n"
+            "  - NEVER use .json extension for nmap, nikto, nuclei, gobuster, or searchsploit output.\n"
+            "  - Use flat simple names: 'reports/nmap.txt', 'reports/nikto.txt', 'reports/gobuster.txt',\n"
+            "    'reports/nuclei.txt', 'reports/searchsploit.txt'\n"
+            "  - nmap may also produce 'reports/nmap.xml' (nmap -oX format is valid XML, not JSON)\n"
+            "  - Report artifacts may use .md or .txt: 'reports/pentest_report.md'"
         )
     if mem_ctx:
         user += f"\n\n{mem_ctx}"
@@ -1533,6 +1613,14 @@ def _generate_subtasks(task: Task, flow: Flow, mem_ctx: str) -> list[Subtask]:
         expected_artifacts = _normalize_expected_artifacts(sd.get("expected_artifacts"))
         if not expected_artifacts:
             expected_artifacts = _infer_expected_artifacts(action_text)
+        # Pentest normalization: force scan kind for tool runs; rewrite .json → .txt for scan output
+        if agent == "pentester":
+            title_str = sd.get("title", "")
+            is_final_report = bool(_PENTEST_REPORT_KEYWORDS_RE.search(title_str))
+            if not is_final_report and deliverable_kind != "report":
+                deliverable_kind = "scan"
+            if deliverable_kind == "scan":
+                expected_artifacts = _normalize_scan_artifacts(expected_artifacts)
         if deliverable_kind == "text":
             needs_container = False
             if agent in ("coder", "installer"):
@@ -1550,8 +1638,11 @@ def _generate_subtasks(task: Task, flow: Flow, mem_ctx: str) -> list[Subtask]:
             "report", "dataset", "artifact",
         }:
             needs_container = True
-            if agent not in ("coder", "installer", "pentester"):
-                if "coder" in roles:
+            if agent not in ("coder", "installer", "pentester", "data_engineer", "devops"):
+                # source/artifact kind always needs a code-generation agent
+                if deliverable_kind == "source":
+                    agent = "coder"  # hard-force for source regardless of roles
+                elif "coder" in roles:
                     agent = "coder"
                 elif "pentester" in roles:
                     agent = "pentester"
@@ -1647,6 +1738,37 @@ def _read_work_sources(flow_id: str | None, max_files: int = 4, max_bytes: int =
     return "\n\n".join(parts)
 
 
+def _read_work_data(flow_id: str | None, max_bytes: int = 12000) -> str:
+    """Return content of small data/report files from the workspace so text agents can use real data."""
+    if not flow_id:
+        return ""
+    root = WORKSPACE_DIR / flow_id
+    if not root.exists():
+        return ""
+    skip = {"flow.json", "flow_log.jsonl", "llm_calls.jsonl"}
+    data_suffixes = {".json", ".txt", ".md", ".csv", ".xml"}
+    budget = max_bytes
+    parts = []
+    for path in sorted(root.rglob("*"), key=lambda p: p.stat().st_size if p.is_file() else 0):
+        if not path.is_file() or path.name in skip or _is_transient_path(path):
+            continue
+        if path.suffix.lower() not in data_suffixes:
+            continue
+        try:
+            size = path.stat().st_size
+            if size == 0 or size > 80_000:
+                continue
+            content = path.read_text(errors="replace")[:budget]
+            budget -= len(content)
+            rel = path.relative_to(root)
+            parts.append(f"=== /work/{rel} ===\n{content}")
+            if budget <= 0:
+                break
+        except OSError:
+            continue
+    return "\n\n".join(parts)
+
+
 def _fix_python(code: str, error_output: str, description: str, flow_id: str | None) -> str:
     workspace = _workspace_inventory(flow_id) if flow_id else "WORKSPACE FILES: unavailable"
     # Include /work source files so the LLM can fix bugs in generated application code,
@@ -1657,7 +1779,10 @@ def _fix_python(code: str, error_output: str, description: str, flow_id: str | N
         "Preserve useful files already present in /work. The corrected build script must modify "
         "the actual deliverable source files in /work and use bounded offline/paper-mode validation.\n"
         "GIT: If the error involves git/clone — git is NOT pre-installed. Add this before any git command:\n"
-        "  import subprocess; subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True)\n"
+        "  import subprocess\n"
+        "  subprocess.run(['apt-get','update','-qq'], capture_output=True)  # MUST run before install\n"
+        "  subprocess.run(['apt-get','install','-y','-qq','git'], capture_output=True)  # no check=True\n"
+        "  # If apt fails (exit 100), fall back to ZIP download instead of crashing.\n"
         "  Then verify: assert pathlib.Path('/work/repo-name').is_dir(), 'clone failed'\n"
         "  GitHub repo names are case-sensitive. OllamAGI: https://github.com/Linutesto/ollamagi\n"
         "  If the directory already exists, skip cloning to stay idempotent.\n"
@@ -1688,7 +1813,9 @@ def _fix_python(code: str, error_output: str, description: str, flow_id: str | N
         "super().__init__(); always pass directory= to super() instead:\n"
         "  class Handler(SimpleHTTPRequestHandler):\n"
         "    def __init__(self, *args, **kw): super().__init__(*args, directory='/work/fixtures', **kw)\n"
-        "To install packages use: import sys,subprocess; subprocess.run([sys.executable,'-m','pip','install','pkg'],check=False,capture_output=True)\n"
+        "To install packages use (--break-system-packages REQUIRED on modern Debian):\n"
+        "  import sys,subprocess; subprocess.run([sys.executable,'-m','pip','install','--break-system-packages','--prefer-binary','pkg'],check=False,capture_output=True)\n"
+        "If error is 'externally-managed-environment' — add --break-system-packages to the pip call.\n"
         "If the error is 'No URL provided', 'usage: ollamagi_task.py', or any argparse help/usage output — "
         "the ENTIRE FAILING CODE is the application itself, not a build script. The application was run "
         "as /tmp/ollamagi_task.py with no arguments, so argparse printed help and exited.\n"
@@ -1708,11 +1835,46 @@ def _fix_python(code: str, error_output: str, description: str, flow_id: str | N
         f"FAILING CODE:\n{code[:10000]}"
     )
     fixed = chat([{"role": "user", "content": prompt}], task_type="coder", flow_id=flow_id)
+    fixed = _strip_fences(fixed)
+    return fixed
+
+
+def _fix_bash_pentest(script: str, error_output: str, description: str,
+                      flow_id: str | None,
+                      expected_artifacts: list[str] | None = None) -> str:
+    """Fix prompt for pentester bash scripts — emphasizes real tool execution."""
+    from core.config import SSH_HOST, SSH_USER
+    artifacts_block = ""
+    if expected_artifacts:
+        paths = "\n".join(f"  /work/{a}" for a in expected_artifacts)
+        artifacts_block = f"\nREQUIRED OUTPUT FILES (create these exact paths):\n{paths}\n"
+    prompt = (
+        "Fix this Kali Linux bash script that failed. Return ONLY corrected bash — no markdown.\n"
+        "CRITICAL: Run ACTUAL Kali tools against the target. NEVER write synthetic/fake data.\n"
+        "An empty output file is VALID — it means 'no findings'. Do NOT fill empty files with made-up data.\n"
+        f"TARGET: {SSH_HOST}  SSH: {SSH_USER}@{SSH_HOST}  (key: /root/.ssh/id_ed25519)\n"
+        f"{artifacts_block}"
+        "TOOL RULES:\n"
+        "- nmap: -oN file.txt -oX file.xml  (NO -oJ flag — nmap has no JSON output)\n"
+        "- nuclei: nuclei -as -target TARGET -o file.txt || true  (text output only, no JSON flag)\n"
+        "- gobuster: gobuster dir ... || true; if empty: echo 'No findings' >> file.txt\n"
+        "- searchsploit: searchsploit --colour never SERVICE VERSION 2>&1 | tee file.txt || true\n"
+        "  (NEVER wrap searchsploit output in JSON — ANSI codes corrupt it)\n"
+        "- ALL output paths end in .txt or .xml — NEVER .json for scan output\n"
+        "- After each tool: verify the file was created, add 'no findings' line if empty\n"
+        "- Use '|| true' after every scan tool to prevent exit on empty results\n\n"
+        f"TASK: {description}\n\n"
+        f"ERROR:\n{error_output[:2000]}\n\n"
+        f"FAILING SCRIPT:\n{script[:8000]}"
+    )
+    fixed = chat([{"role": "user", "content": prompt}], task_type="coder", flow_id=flow_id)
     return _strip_fences(fixed)
 
 def _fix_bash(script: str, error_output: str, description: str, flow_id: str | None) -> str:
     prompt = (
-        "Fix this bash script that failed. Do NOT use heredocs. Return ONLY corrected bash — no markdown.\n\n"
+        "Fix this bash script that failed. Do NOT use heredocs. Return ONLY corrected bash — no markdown.\n"
+        "If error is 'externally-managed-environment': add --break-system-packages to all pip calls.\n"
+        "pip install syntax: pip3 install --break-system-packages --prefer-binary PKG\n\n"
         f"TASK: {description}\n\n"
         f"ERROR OUTPUT:\n{error_output[:2000]}\n\n"
         f"FAILING SCRIPT:\n{script[:3000]}"
@@ -1779,7 +1941,10 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         f"DELIVERABLE CONTRACT: kind={deliverable_kind}; expected="
         f"{', '.join('/work/' + path for path in expected_artifacts) or 'no fixed path'}"
     )
+    import datetime as _dt
+    _now_str = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     extra_ctx = (
+        f"CURRENT DATE/TIME: {_now_str}\n"
         f"FLOW: {flow.objective}\nTASK: {task.title}\n"
         f"{contract_text}\n"
         f"NON-NEGOTIABLE CONSTRAINTS:\n"
@@ -1899,13 +2064,18 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         return f"Wrote /work/{direct_text_target}\n\n[VALIDATION] {validation}"
 
     if not subtask.needs_container:
+        # Include real data files from the workspace so the agent doesn't hallucinate
+        work_data = _read_work_data(flow.id)
+        if work_data:
+            extra_ctx += f"\n\nWORKSPACE DATA FILES (USE THIS DATA — do NOT invent values):\n{work_data}"
         extra_ctx += (
             "\nIMPORTANT: This is a text-only reasoning call. You cannot execute shell commands, "
-            "read file contents, create files, or verify runtime behavior. Do not claim that you "
-            "used cat/ls/grep or created/saved anything in /work. Provide analysis only from the "
-            "context explicitly included above."
+            "read file contents, or create files. Use ONLY the data provided in WORKSPACE DATA FILES "
+            "above — never invent metrics, statistics, or findings. If data is missing, say so explicitly."
         )
-        messages = history + [{"role": "user", "content": subtask.description}]
+        import datetime as _dt3
+        _date_banner = f"[TODAY IS {_dt3.datetime.now().strftime('%Y-%m-%d')}. Use this exact date in all output — never write 2023 or any other year.]\n\n"
+        messages = history + [{"role": "user", "content": _date_banner + subtask.description}]
         result = run_agent(subtask.agent, messages, extra_ctx, flow_id=flow_id)
         valid, validation = _validate_text_result(result)
         subtask.validation = validation
@@ -1918,11 +2088,19 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
 
     # Injected before every Python build script: installs /work/requirements.txt so
     # later subtasks (e.g. "run self-test") can import packages declared by earlier ones.
+    import datetime as _dt2
+    _today_var = _dt2.datetime.now().strftime("%Y-%m-%d")
+    _ts_var    = _dt2.datetime.now().strftime("%Y-%m-%d %H:%M")
     _REQ_PREAMBLE = (
+        f"# ── Real current date (do NOT use any other date in output) ──\n"
+        f"import datetime as _datetime_mod\n"
+        f"TODAY = '{_today_var}'  # YYYY-MM-DD\n"
+        f"NOW   = '{_ts_var}'    # YYYY-MM-DD HH:MM\n\n"
         "import subprocess as _sp, sys as _sys, pathlib as _pl\n"
         "_req = _pl.Path('/work/requirements.txt')\n"
         "if _req.exists() and _req.stat().st_size > 0:\n"
-        "    _sp.run([_sys.executable, '-m', 'pip', 'install', '--prefer-binary', '-q',\n"
+        "    _sp.run([_sys.executable, '-m', 'pip', 'install', '--prefer-binary',\n"
+        "             '--break-system-packages', '-q',\n"
         "             '-r', str(_req)], check=False, capture_output=True)\n"
         "del _sp, _sys, _pl, _req\n\n"
         # web_search() helper: SearxNG primary (better quality, no rate-limits),
@@ -1962,6 +2140,7 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
 
     if use_python:
         code_prompt = (
+            f"TODAY IS {_ts_var}. Use this exact date/time in any reports, headers, or filenames.\n\n"
             f"Write a Python 3 script that accomplishes this subtask:\n\n"
             f"{subtask.description}\n\n"
             f"{contract_text}\n\n"
@@ -1970,9 +2149,10 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             "selenium, webdriver-manager, duckduckgo-search.\n"
             "Any /work/requirements.txt present from earlier subtasks is automatically "
             "installed before your script runs — no need to pip-install those again.\n"
-            "GIT: git is NOT pre-installed. Install it first when needed:\n"
+            "GIT: git is NOT pre-installed. Install it safely (no check=True for apt-get):\n"
             "  import subprocess\n"
-            "  subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True)\n"
+            "  subprocess.run(['apt-get','update','-qq'], capture_output=True)\n"
+            "  subprocess.run(['apt-get','install','-y','-qq','git'], capture_output=True)\n"
             "  subprocess.run(['git','clone','https://github.com/user/repo','/work/repo'], check=True)\n"
             "  assert pathlib.Path('/work/repo').is_dir(), 'clone failed'\n"
             "  # To skip re-cloning if already present: if not Path('/work/repo').exists(): ...\n"
@@ -2003,9 +2183,9 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             "- Keep SDK imports and distributions consistent. For Telegram prefer "
             "python-telegram-bot>=21,<22 with imports from telegram/telegram.ext. Never install the "
             "unrelated `telegram` package and never mix python-telegram-bot with telebot/pyTelegramBotAPI\n"
-            "- Install missing packages with pip using --prefer-binary to avoid Rust/C compilation:\n"
+            "- Install missing packages with pip — MUST include --break-system-packages (required on modern Debian):\n"
             "  import sys, subprocess\n"
-            "  subprocess.run([sys.executable, '-m', 'pip', 'install', '--prefer-binary', 'pkg'], check=False, capture_output=True)\n"
+            "  subprocess.run([sys.executable, '-m', 'pip', 'install', '--prefer-binary', '--break-system-packages', 'pkg'], check=False, capture_output=True)\n"
             "- NEVER use pydantic v2 — use pydantic v1 (pip install 'pydantic<2') or plain dataclasses instead\n"
             "- NEVER use packages that require Rust compilation (polars, cryptography>=42, pydantic-core, etc.)\n"
             "- Prefer packages that have pre-built wheels: requests, httpx, bs4, lxml, playwright, selenium\n"
@@ -2047,7 +2227,11 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             "- Return ONLY raw Python code — NO markdown fences, NO explanation"
         )
         messages = history + [{"role": "user", "content": code_prompt}]
-        code = _strip_fences(run_agent(subtask.agent, messages, extra_ctx, flow_id=flow_id))
+        # Always use a code-generation agent for Python execution — planning agents produce
+        # orchestration text, not runnable scripts
+        _CODE_AGENTS = {"coder", "installer", "data_engineer", "devops", "pentester"}
+        code_gen_agent = subtask.agent if subtask.agent in _CODE_AGENTS else "coder"
+        code = _strip_fences(run_agent(code_gen_agent, messages, extra_ctx, flow_id=flow_id))
 
         for attempt in range(MAX_RETRIES + 1):
             subtask.attempts = attempt + 1
@@ -2104,22 +2288,42 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             script_prompt = (
                 f"Write a bash script for this penetration testing subtask:\n{subtask.description}\n"
                 f"{contract_text}\n"
-                f"## Environment: Kali Linux container — authorized to pentest {SSH_HOST}\n"
-                "ALL tools are PRE-INSTALLED — do NOT apt-get install anything:\n"
-                "  nmap, masscan, nikto, gobuster, ffuf, nuclei, sqlmap, hydra, john, hashcat,\n"
-                "  searchsploit, metasploit (msfconsole/msfvenom), netcat, curl, wget, openssl,\n"
-                "  enum4linux, smbclient, rpcclient, crackmapexec, impacket-*, whatweb, wafw00f\n"
-                f"## Target\n"
-                f"  HOST: {SSH_HOST}\n"
-                f"  SSH:  ssh {SSH_USER}@{SSH_HOST}   (key already at /root/.ssh/id_ed25519)\n"
-                "## Rules\n"
-                "- Run actual tools against the target — passive/offline analysis alone is NOT a pentest\n"
-                "- Use timing flags: nmap -T4, nuclei -timeout 10, gobuster -t 20\n"
-                "- Append '|| true' after scans that exit non-zero on no-results (nuclei, gobuster)\n"
-                "- Save ALL tool output to /work/ (nmap XML with -oX, nikto -o, nuclei -o, etc.)\n"
-                "- Exit non-zero ONLY on true failure (tool missing, SSH down, etc.)\n"
-                "- Do NOT use heredocs. Do NOT start daemons or interactive sessions.\n"
-                "- The script must terminate on its own — no infinite loops, no msfconsole -q\n"
+                f"## Environment: Kali Linux — authorized to pentest {SSH_HOST}\n"
+                "ALL tools PRE-INSTALLED — do NOT apt-get install. Do NOT fabricate data.\n"
+                "Available: nmap masscan nikto gobuster ffuf nuclei sqlmap hydra john hashcat\n"
+                "  searchsploit enum4linux smbclient rpcclient curl wget netcat openssl whatweb\n"
+                f"## Target: {SSH_HOST}  |  SSH: {SSH_USER}@{SSH_HOST} (key: /root/.ssh/id_ed25519)\n"
+                "## CRITICAL TOOL USAGE\n"
+                "nmap:\n"
+                "  - Use: nmap -T4 -sV -O -oN /work/reports/nmap.txt -oX /work/reports/nmap.xml TARGET\n"
+                "  - nmap has NO JSON output flag (-oJ does not exist). Use -oA for all 3 formats.\n"
+                "  - Never write or echo fake nmap JSON — run the real tool\n"
+                "nuclei:\n"
+                "  - nuclei -as -target TARGET -o /work/reports/nuclei.txt || true\n"
+                "  - '-as' = auto-scan mode. Output is TEXT (.txt). nuclei has NO JSON output flag.\n"
+                "  - If -as is unavailable: nuclei -t /usr/share/nuclei-templates/ -target TARGET -o FILE || true\n"
+                "gobuster:\n"
+                "  - gobuster dir -u http://TARGET:PORT -w /usr/share/wordlists/dirb/common.txt \\\n"
+                "      -o /work/reports/gobuster.txt -t 20 --no-error || true\n"
+                "  - gobuster exits non-zero when nothing found — always use || true\n"
+                "  - If output file empty or missing: echo 'No directories found' >> /work/reports/gobuster.txt\n"
+                "searchsploit:\n"
+                "  - Parse nmap output to find service+version, then run:\n"
+                "    searchsploit --colour never SERVICE VERSION 2>&1 | tee /work/reports/searchsploit.txt || true\n"
+                "  - Output is PLAIN TEXT. NEVER wrap in JSON or python — ANSI codes break JSON.\n"
+                "  - If no results: echo 'searchsploit: no exploits found for installed versions' >> file.txt\n"
+                "nikto:\n"
+                "  - nikto -h http://TARGET:PORT -o /work/reports/nikto.txt -Format txt || true\n"
+                "## OUTPUT RULES\n"
+                "- ALL expected_artifacts paths end in .txt or .xml — NEVER .json for scan output\n"
+                "- Write to EXACTLY the paths listed in DELIVERABLE CONTRACT (no renaming, no extension changes)\n"
+                "- Create /work/reports/ before writing: mkdir -p /work/reports\n"
+                "- Verify each expected file exists after writing:\n"
+                "  for f in EXPECTED_PATHS; do [ -f \"$f\" ] || echo \"WARNING: $f not created\" >&2; done\n"
+                "- Empty scan result = valid. Never fabricate data. If tool finds nothing:\n"
+                "  echo 'RESULT: no findings' >> /work/reports/TOOL.txt\n"
+                "- Exit non-zero ONLY on true failure (tool missing, host unreachable)\n"
+                "- The script MUST terminate. No daemons, no msfconsole interactive sessions.\n"
                 "Return ONLY the bash script — no markdown."
             )
         else:
@@ -2129,6 +2333,8 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
                 "Environment: Debian Linux container with apt-get. "
                 "python3 and pip3 may not be pre-installed — if you need them, add: "
                 "apt-get install -y -qq python3 python3-pip 2>/dev/null || true\n"
+                "pip install MUST use --break-system-packages (modern Debian requires it):\n"
+                "  pip3 install --break-system-packages --prefer-binary PKG\n"
                 "Do NOT use heredocs. Do NOT embed Python code inline in bash.\n"
                 "Do NOT assume any tool is available — install what you need via apt-get.\n"
                 "Start with strict error handling. Inspect /work for equivalent input files before failing.\n"
@@ -2139,7 +2345,8 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
                 "Save all outputs to /work/. Return ONLY the bash script, no markdown."
             )
         messages = history + [{"role": "user", "content": script_prompt}]
-        script = _strip_fences(run_agent(subtask.agent, messages, extra_ctx, flow_id=flow_id))
+        bash_gen_agent = subtask.agent if subtask.agent in _CODE_AGENTS else "coder"
+        script = _strip_fences(run_agent(bash_gen_agent, messages, extra_ctx, flow_id=flow_id))
 
         for attempt in range(MAX_RETRIES + 1):
             subtask.attempts = attempt + 1
@@ -2162,7 +2369,13 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
                     output += "\nDetected fatal error text despite exit code 0."
                 if attempt < MAX_RETRIES:
                     log_fn(f"  ⚠ exit {exit_code} — auto-fixing bash (attempt {attempt+1}/{MAX_RETRIES})…", "warn")
-                    script = _fix_bash(script, output, subtask.description, flow_id)
+                    if is_pentest:
+                        script = _fix_bash_pentest(
+                            script, output, subtask.description, flow_id,
+                            expected_artifacts=subtask.expected_artifacts,
+                        )
+                    else:
+                        script = _fix_bash(script, output, subtask.description, flow_id)
                 else:
                     return f"[FAILED after {attempt+1} attempts]\n{output[-2000:]}"
             except Exception as e:

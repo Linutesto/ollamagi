@@ -48,12 +48,12 @@ Live log stream from all flows. Filter by level: all · info · warn · error.
 Badge shows unread count.
 
 ### Memory
-Search Hermes beliefs and memories. Shows active goals at the top.
+Search cognitive memory beliefs. Shows active goals at the top.
 Manual belief entry supported.
 
 ### System
 - Hardware info (configured in `.env`)
-- Service health: Ollama · Hermes · WebSocket
+- Service health: Ollama · Memory · WebSocket
 - Token usage: session · all-time · per-flow breakdown
 - Session reset button
 

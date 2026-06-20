@@ -6,7 +6,7 @@ Developer reference. Updated as the system evolves.
 
 ## What this is
 
-OllamAGI is a local-first autonomous agent platform. It takes a natural-language objective, decomposes it into tasks and subtasks using Ollama LLMs, executes code in isolated Docker containers, auto-fixes failures, and feeds all results back into Hermes — a persistent SQLite cognitive memory system.
+OllamAGI is a local-first autonomous agent platform. It takes a natural-language objective, decomposes it into tasks and subtasks using Ollama LLMs, executes code in isolated Docker containers, auto-fixes failures, and feeds all results back into a persistent SQLite cognitive memory system.
 
 It is a daily-driver tool, not a demo. All features described here are working and in production use.
 
@@ -22,7 +22,7 @@ ollamagi/
 │   ├── agents.py            Agent role definitions + run_agent()
 │   ├── model_router.py      Ollama call routing, token counting, stop signals
 │   ├── orchestrator.py      Flow lifecycle: decompose → execute → replan → memory
-│   └── memory_bridge.py     Read/write Hermes SQLite (beliefs, memories, goals)
+│   └── memory_bridge.py     Read/write cognitive memory SQLite (beliefs, memories, goals)
 ├── executor/
 │   ├── docker_manager.py    Container lifecycle, exec_python(), exec_script(), bootstrap
 │   └── task_runner.py       TaskResult dataclass used by memory extractor
@@ -30,7 +30,7 @@ ollamagi/
 │   ├── server.py            FastAPI: REST endpoints + WebSocket broadcast
 │   └── static/index.html   Complete mobile-first SPA (single file, no build step)
 ├── memory/
-│   └── extractor.py         Bulk Hermes write after flow completion
+│   └── extractor.py         Bulk memory write after flow completion
 ├── flows/
 │   └── __init__.py          (bug_bounty.py excluded from public repo)
 ├── scripts/
@@ -68,6 +68,9 @@ Agents use `pip install --prefer-binary` to avoid source builds. Pydantic v2 and
 
 ### Config
 Everything in `core/config.py` reads from env vars. `HOME_DIR` in docker_manager uses `OLLAMAGI_USER_HOME` env var (defaults to `Path.home()`). Model names are env-configurable with public Ollama Hub defaults.
+
+All agent roles are intentionally routed through `MODEL_SINGLE` (currently
+`vaultbox/qwen3.5-uncensored:27b`) to prevent VRAM eviction and reload stalls.
 
 ---
 
@@ -121,16 +124,16 @@ Containers have:
 
 ---
 
-## Hermes memory integration
+## Cognitive memory integration
 
-Hermes is optional. If `HERMES_DB` doesn't point to a real file, all memory calls are silently no-ops (wrapped in try/except in `memory_bridge.py`).
+Memory is optional. If `MEMORY_DB` doesn't point to a real file, all memory calls are silently no-ops (wrapped in try/except in `memory_bridge.py`).
 
 When available:
 - `context_for_task(description)` — semantic search, returns relevant beliefs/memories as context string injected into every subtask
 - `_memory_distill(flow_id, task_title, result)` — after each task, LLM extracts 1-3 beliefs and stores them
 - `extract_and_store()` — bulk extraction at flow end
 
-Hermes DB path: `~/.hermes/cognitive_memory.sqlite` (configurable via `HERMES_DB` env var).
+Memory DB path: `~/.ollamagi/cognitive_memory.sqlite` (configurable via `MEMORY_DB` env var).
 
 ---
 
@@ -185,12 +188,12 @@ Token API response shape:
 | GET | `/api/flows/{id}/workspace` | List workspace files |
 | GET | `/api/tokens` | Token stats (session + alltime + per-flow) |
 | POST | `/api/tokens/reset` | Reset session counter |
-| GET | `/api/status` | Ollama + Hermes health |
+| GET | `/api/status` | Ollama + memory health |
 | GET | `/api/system/info` | Hardware info from env vars |
-| GET | `/api/memory/goals` | Active Hermes goals |
+| GET | `/api/memory/goals` | Active goals |
 | GET | `/api/memory/search?q=` | Semantic search |
 | GET | `/api/memory/stats` | Belief/memory/goal counts |
-| POST | `/api/memory/store` | Manual Hermes write |
+| POST | `/api/memory/store` | Manual memory write |
 | POST | `/api/terminal/exec` | Run command in container or host |
 | WS | `/ws` | Live log/event stream |
 
@@ -237,3 +240,28 @@ bash scripts/health_check.sh
 17. Bash script prompt: no longer assumes python3 is available, instructs apt-get install
 18. GitHub release prep: full audit, all personal info moved to env vars, 11 new files
 19. Public release: https://github.com/Linutesto/ollamagi
+20. Single-model routing: every reasoning/coding/tool role uses `vaultbox/qwen3.5-uncensored:27b`
+21. Deterministic execution validation: exit codes, fatal output, changed artifacts, syntax, and runtime smoke tests
+22. Explicit subtask deliverable contracts: source, docs, config, dependencies, reports, datasets, tests, and exact paths
+23. Contract-based recovery: later valid artifacts can recover failed implementation attempts without false type mismatches
+24. Final repair loop: failed project-level validation gets two bounded workspace repair/revalidation attempts
+25. Documentation/report artifacts bypass Python builder scripts and are written directly from bounded model output
+26. Generated Python build scripts are syntax-checked before Docker execution; nested triple-quote repairs are explicit
+27. Exact expected paths override generic suffix classes (for example `config/logging_config.py`)
+28. Failed pre-replan contracts are historical; final deterministic workspace validation decides flow success
+29. Python agent projects with third-party imports must persist `requirements.txt`, `pyproject.toml`, or another dependency manifest
+30. Telegram/Discord/Slack projects must expose an offline `--self-test`/`--dry-run`; final validation blocks external network access
+31. Telegram SDK consistency is explicit: `telegram` imports use `python-telegram-bot`; `telebot` uses `pyTelegramBotAPI`
+32. Token-like Telegram credentials in generated Python source are rejected
+33. All agent projects must expose a network-isolated `--self-test` or `--dry-run`; localhost daemons are not assumed
+34. Objective guardrails prevent memory context from introducing unrequested Redis/databases/cloud infrastructure
+35. Configuration/dependency bundles are written directly by the host, avoiding missing YAML/TOML writer dependencies
+36. Multi-file contracts require every declared artifact, not merely one matching file
+37. Third-party imports are checked against persistent manifests, including package aliases
+38. Research, product, and security flows require durable final report artifacts
+39. Final validation repairs are tracked separately from replans; replaced failures display as `superseded`
+40. Generated agent plans are constrained by the objective; cognitive memory cannot add mandatory infrastructure
+41. Email/API/chat/data/web-automation quick launches have objective-specific offline validation requirements
+42. Runtime self-tests execute with external networking disabled and no localhost daemon assumptions
+43. `__pycache__`, bytecode, logs, and temporary files are excluded from deliverable evidence
+44. Logging and explicit error handling are checked when requested by the objective

@@ -13,7 +13,7 @@ OllamAGI is a working prototype open-sourced for the community. The roadmap refl
 - [x] Mobile-first dashboard (6 tabs)
 - [x] Live terminal in dashboard
 - [x] Token tracking (per-flow, session, all-time)
-- [x] Hermes memory integration (beliefs, RAG)
+- [x] Cognitive memory integration (beliefs, RAG)
 - [x] Token counter persistence across restarts
 - [x] Quick launch presets with config sheets
 

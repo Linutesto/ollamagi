@@ -60,7 +60,9 @@ Environment:
 - Pre-installed: requests, httpx, aiohttp, beautifulsoup4, lxml, selenium, playwright,
   rich, loguru, colorama, pyyaml, python-dotenv, psutil, duckduckgo-search
 - Internet access available; SearxNG search pre-injected as web_search()
-- git is NOT pre-installed — install with: subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True)
+- git is NOT pre-installed — install safely (apt-get update first, no check=True):
+    subprocess.run(['apt-get','update','-qq'], capture_output=True)
+    subprocess.run(['apt-get','install','-y','-qq','git'], capture_output=True)
 - To clone a GitHub repo without git: requests.get('https://codeload.github.com/{user}/{repo}/zip/refs/heads/main')
 - Never use pydantic v2, polars, cryptography>=42, or packages requiring Rust compilation
 - `with` / `async with` blocks do NOT support `else` — only `for`, `while`, and `try` support `else`
@@ -70,7 +72,8 @@ Rules:
 - You write a BUILD SCRIPT that creates deliverable files in /work — not the final app itself
 - Save ALL output to /work/ using pathlib.Path('/work/filename').write_text(...)
 - Create parent directories before writing: pathlib.Path('/work/dir').mkdir(parents=True, exist_ok=True)
-- Install missing packages with --prefer-binary to avoid Rust/C compilation
+- Install missing packages with: pip install --prefer-binary --break-system-packages PKG
+  (--break-system-packages is required on modern Debian — without it pip refuses to install)
 - Persist runtime deps in /work/requirements.txt
 - Validate generated source with ast.parse() before finishing
 - Print progress to stdout; exit non-zero if required output is missing

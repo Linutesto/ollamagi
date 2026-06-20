@@ -24,6 +24,25 @@ app = FastAPI(title="OllamAGI", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+
+def _recover_stale_flows():
+    """On startup: any flow.json stuck in 'running' wasn't cleanly stopped — mark stopped."""
+    if not WORKSPACE_DIR.exists():
+        return
+    for d in WORKSPACE_DIR.iterdir():
+        state_file = d / "flow.json"
+        if not state_file.exists():
+            continue
+        try:
+            data = json.loads(state_file.read_text())
+            if data.get("status") == "running":
+                data["status"] = "stopped"
+                state_file.write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass
+
+_recover_stale_flows()
+
 _ws_clients: list[WebSocket] = []
 _loop: asyncio.AbstractEventLoop | None = None
 
@@ -444,6 +463,8 @@ def _assistant_system_context(query: str) -> str:
                         + ", ".join(files[:6]) + ("…" if len(files) > 6 else "")
                     )
 
+    import datetime as _dt
+    _now_str = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [
         "You are Aria, the OllamAGI Assistant — an intelligent, direct, and knowledgeable companion "
         "built into the OllamAGI autonomous agent platform.",
@@ -453,6 +474,7 @@ def _assistant_system_context(query: str) -> str:
         "and opinionated when asked. Format code in markdown code blocks. Use bullet points for lists.",
         "",
         "## System",
+        f"- Current date/time: {_now_str}",
         f"- Hardware: {HW_CPU or 'Ryzen 9 7950X'} · {HW_GPU or 'RTX 4090'} · {HW_RAM or '96GB RAM'}",
         f"- Ollama: {len(model_names)} models — {', '.join(model_names[:8])}{'…' if len(model_names) > 8 else ''}",
         f"- Memory: {ms.get('total_nodes', 0)} nodes · {ms.get('by_level', {}).get(0, 0)} raw memories · {ms.get('db_size_kb', 0) // 1024:.1f} MB",

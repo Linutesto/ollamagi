@@ -49,6 +49,8 @@ def create_container(flow_id: str, task_id: str, container_type: str = "python")
         },
         network_mode="bridge",
         cap_add=["NET_ADMIN", "NET_RAW"],
+        # host.docker.internal → host gateway so containers can reach SearxNG at 4000
+        extra_hosts={"host.docker.internal": "host-gateway"},
     )
     time.sleep(1)
     _inject_ssh(container)
@@ -60,26 +62,34 @@ def create_container(flow_id: str, task_id: str, container_type: str = "python")
 _COMMON_PACKAGES = (
     "uv requests httpx aiohttp python-dotenv rich colorama "
     "beautifulsoup4 lxml pyyaml toml psutil loguru selenium webdriver-manager "
-    "duckduckgo-search"
+    "duckduckgo-search paramiko"
 )
+
+# System packages always installed alongside Python
+_COMMON_APT = "openssh-client curl ca-certificates"
 
 def _bootstrap_python(container, container_type: str):
     if container_type == "pentest":
         return  # Kali has its own package management
-    # Bootstrap must finish before generated code starts. The old detached setup
-    # raced the task and regularly produced "python3: command not found".
+    # --break-system-packages is required on modern Debian (bookworm+) / PEP 668 containers
+    _pip = (
+        f"python3 -m pip install -q --disable-pip-version-check "
+        f"--prefer-binary --break-system-packages {_COMMON_PACKAGES}"
+    )
     if container_type == "generic":
         command = (
-            "if ! command -v python3 >/dev/null 2>&1; then "
-            "export DEBIAN_FRONTEND=noninteractive; "
+            "export DEBIAN_FRONTEND=noninteractive && "
             "apt-get update -qq && "
-            "apt-get install -y -qq python3 python3-pip ca-certificates curl; "
-            "fi; command -v python3"
+            f"apt-get install -y -qq python3 python3-pip {_COMMON_APT} && "
+            + _pip
         )
     else:
+        # python image already has python3; ensure ssh client + pip packages
         command = (
-            "command -v python3 && "
-            f"python3 -m pip install -q --disable-pip-version-check --prefer-binary {_COMMON_PACKAGES}"
+            "export DEBIAN_FRONTEND=noninteractive && "
+            "apt-get update -qq && "
+            f"apt-get install -y -qq {_COMMON_APT} 2>/dev/null || true && "
+            + _pip
         )
 
     exit_code, output = _exec_with_timeout(
@@ -92,7 +102,8 @@ def _bootstrap_python(container, container_type: str):
 def _inject_ssh(container) -> bool:
     try:
         container.exec_run("mkdir -p /root/.ssh", user="root")
-        _docker().api.put_archive(container.id, "/root/.ssh", _tar_file(SSH_KEY))
+        # Always inject as id_ed25519 — the conventional name scripts expect
+        _docker().api.put_archive(container.id, "/root/.ssh", _tar_file(SSH_KEY, arcname="id_ed25519"))
         container.exec_run("chmod 600 /root/.ssh/id_ed25519", user="root")
         # SSH config
         cfg = (f"Host {SSH_HOST}\n"
@@ -111,10 +122,10 @@ def _inject_ssh(container) -> bool:
         return False
 
 
-def _tar_file(path: Path) -> bytes:
+def _tar_file(path: Path, arcname: str | None = None) -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tar:
-        tar.add(str(path), arcname=path.name)
+        tar.add(str(path), arcname=arcname or path.name)
     buf.seek(0)
     return buf.read()
 

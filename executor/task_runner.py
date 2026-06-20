@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 from executor.docker_manager import create_container, exec_script, stop_container
 from core.model_router import generate_task_script
-from core.memory_bridge import context_for_task
+from core.fractal_memory import context_for_task
 
 
 @dataclass
@@ -30,11 +30,11 @@ def run_task(
     log(f"[ollamagi] task {task['id']}: {task['title']}")
     log(f"[ollamagi] generating script via {task.get('type', 'analysis')} model...")
 
-    hermes_ctx = context_for_task(task["description"])
-    if hermes_ctx:
-        log(f"[ollamagi] injecting {len(hermes_ctx.splitlines())} Hermes context lines")
+    mem_ctx = context_for_task(task["description"])
+    if mem_ctx:
+        log(f"[ollamagi] injecting {len(mem_ctx.splitlines())} memory context lines")
 
-    script = generate_task_script(task, context=hermes_ctx)
+    script = generate_task_script(task, context=mem_ctx)
     log(f"[ollamagi] script generated ({len(script)} chars), spinning container...")
 
     container = None

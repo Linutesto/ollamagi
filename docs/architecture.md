@@ -28,7 +28,7 @@ OllamAGI is a 5-layer system connecting a web interface to local LLMs via a flow
 │  exec_script(): bash scripts                            │
 ├─────────────────────────────────────────────────────────┤
 │  LAYER 1 — MEMORY  (core/memory_bridge.py)              │
-│  Hermes SQLite: beliefs, memories, goals, RAG           │
+│  Cognitive memory SQLite: beliefs, memories, goals, RAG │
 │  context_for_task(): semantic search per subtask        │
 │  _memory_distill(): extracts 1-3 beliefs per task       │
 └─────────────────────────────────────────────────────────┘
@@ -53,8 +53,8 @@ for each Task:
       reflector agent   — extracts lesson
   if 2 consecutive task failures:
     _replan_remaining() — LLM replans rest of flow
-  task done → _memory_distill() → Hermes
-flow done → extract_and_store() → Hermes bulk write
+  task done → _memory_distill() → cognitive memory
+flow done → extract_and_store() → cognitive memory bulk write
 ```
 
 ---
@@ -91,15 +91,15 @@ The Ollama daemon thread completes in the background (result discarded).
 
 ---
 
-## Hermes Memory
+## Cognitive Memory
 
-Hermes is an optional but powerful companion. It is a SQLite database with 100+ tables covering:
+The cognitive memory system is optional. It is a SQLite database covering:
 - `beliefs` — factual assertions extracted from task results
 - `memories` — episodic records of past work
 - `goals` — current objectives and priorities
 - Semantic index — vector embeddings for RAG retrieval
 
-OllamAGI reads Hermes context before each task and writes new beliefs after completion. If `HERMES_DB` does not exist, memory features are silently disabled.
+OllamAGI reads memory context before each task and writes new beliefs after completion. If `MEMORY_DB` does not exist, memory features are silently disabled.
 
 ---
 

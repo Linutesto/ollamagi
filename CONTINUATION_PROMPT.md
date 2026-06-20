@@ -8,7 +8,7 @@ You are continuing development of **OllamAGI** — a local-first autonomous agen
 
 ## What this is
 
-OllamAGI takes a natural-language objective, decomposes it into tasks/subtasks via Ollama LLMs, executes code in Docker containers, auto-fixes failures, and stores results in Hermes (a 100-table SQLite cognitive memory at `~/.hermes/cognitive_memory.sqlite`).
+OllamAGI takes a natural-language objective, decomposes it into tasks/subtasks via Ollama LLMs, executes code in Docker containers, auto-fixes failures, and stores results in a SQLite cognitive memory at `~/.ollamagi/cognitive_memory.sqlite`.
 
 **Read `CODEX.md` first** — it has the full architecture, all API endpoints, known issues, and session history.
 
@@ -24,11 +24,9 @@ OllamAGI takes a natural-language objective, decomposes it into tasks/subtasks v
 ## Current model config (`.env` / actual running values)
 
 ```
-MODEL_ORCHESTRATOR = vaultbox/qwen3.5-uncensored:27b
-MODEL_CODER        = qwen3-coder:30b
-MODEL_FAST         = jaahas/qwen3.5-uncensored:2b
-MODEL_EMBEDDINGS   = mxbai-embed-large:latest
-OLLAMA_CTX         = 65536
+MODEL_SINGLE     = vaultbox/qwen3.5-uncensored:27b
+MODEL_EMBEDDINGS = mxbai-embed-large:latest
+OLLAMA_CTX       = 65536
 ```
 
 ## Service management
@@ -60,13 +58,15 @@ python3 -c "import core.orchestrator; import core.model_router; import api.serve
 | `api/server.py` | All REST endpoints + WebSocket |
 | `api/static/index.html` | Complete dashboard SPA — JS, CSS, HTML in one file |
 
-## Active known issues (check CODEX.md for full list)
+## Current reliability model
 
-1. **LLM sometimes generates agent names not in ALL_ROLES** (`planning_agent`, `research_agent`) — they silently fall back to `primary_agent`. To fix properly: either add these as aliases in `ALL_ROLES`, or add a validation step in `_generate_subtasks` that constrains the agent names the LLM can pick.
-
-2. **Workspace files** — agent outputs land in `workspace/<flow-id>/`. The directory is git-ignored. Files from generated projects (Discord bots, scrapers, etc.) live here. They are NOT cleaned up between runs.
-
-3. **Hermes memory** — runs on the host at `~/.hermes/cognitive_memory.sqlite`. The memory bridge silently degrades if the file doesn't exist. If Hermes shows "unreachable" in the dashboard, check the path in `.env`.
+1. Generated role aliases are normalized and constrained to the selected workflow type.
+2. Every subtask has an explicit deliverable contract (`source`, `documentation`, `dependency`, `configuration`, `report`, `dataset`, `test`, etc.) plus expected `/work` paths when known.
+3. Container work is accepted only with observable evidence: valid changed artifacts or substantive test output.
+4. Agent-development flows receive project-level syntax, completeness, offline-mode, and bounded runtime smoke validation.
+5. Final validation failures receive up to two bounded repair/revalidation attempts against the actual workspace.
+6. Workspace files live in `workspace/<flow-id>/` and are intentionally preserved between process restarts.
+7. Cognitive memory silently degrades if `~/.ollamagi/cognitive_memory.sqlite` is unavailable.
 
 ## GitHub repo
 
@@ -81,17 +81,32 @@ git push
 
 ## Session context
 
-The last session focused on:
-- Fixing flows stuck in "running" state after server restart
-- Fixing Ollama 500 errors leaving flows stuck (now marks as `failed`)
-- Adding token usage display per flow (detail view + list cards)
-- Token dashboard: session / all-time / per-flow + reset button
-- Increasing Ollama timeout to 600s with 3-retry interruptible planning
-- GitHub release: audit, sanitize, push to Linutesto/ollamagi
-- Fixing debian containers missing python3 (bootstrap now apt-gets it)
-- Fixing bash script prompt to not assume python3 is available
+The last session focused on workflow reliability:
+- Replaced keyword-based artifact guessing with explicit per-subtask deliverable contracts
+- Prevented README and requirements tasks from being falsely treated as source-code tasks
+- Added exact expected-artifact path validation and safe path normalization
+- Added contract-based task recovery after later validated subtasks
+- Added deterministic final repair attempts for broken imports/interfaces/runtime smoke tests
+- Added cross-workflow tests for agent, product, research, security, and general flows
+- Directly writes single-file documentation/reports instead of generating fragile Python writer scripts
+- Preflights generated Python build-script syntax and explicitly repairs nested triple-quote failures
+- Treats exact artifact paths as authoritative even when their suffix is unconventional
+- Uses final deterministic workspace validation as the flow outcome; failed attempts remain visible as history
+- Requires persistent dependency manifests for Python projects with third-party imports
+- Runs credentialed bot smoke tests through explicit offline modes with external networking blocked
+- Rejects mixed Telegram SDKs and hardcoded token-like credentials
+- Requires every agent to provide a network-isolated offline self-test
+- Prevents memory context from adding unrequested Redis/databases/cloud services
+- Writes configuration/dependency bundles directly without runtime writer dependencies
+- Requires all paths in multi-file deliverable contracts
+- Requires durable reports for research, product, and security workflows
+- Separates final repairs from replans and marks replaced attempts as `superseded`
+- Adds objective-specific validation for email, API, chat, data-pipeline, crawler, trading, and web-automation agents
+- Excludes bytecode, caches, logs, and temporary files from artifact evidence
+- Verifies requested logging and explicit error handling in generated source
+- Confirmed the server is healthy and only Qwen 3.5 27B is loaded
 
-**Last thing done:** Created CODEX.md and this file, committed and pushed to GitHub.
+**Last thing done:** Rebuilt email flow `74f8d3ea` as a real local `.eml` automation agent and completed a cross-workflow reliability audit.
 
 ## How to continue
 

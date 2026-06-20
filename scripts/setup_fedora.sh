@@ -45,9 +45,7 @@ fi
 # ── Pull recommended Ollama models ───────────────────────────────────────────
 echo ""
 echo "Recommended: pull at least one model before starting."
-echo "  ollama pull qwen2.5:32b          # orchestrator (best quality)"
-echo "  ollama pull qwen2.5:7b           # fast/cheap calls"
-echo "  ollama pull qwen2.5-coder:32b    # code generation"
+echo "  ollama pull vaultbox/qwen3.5-uncensored:27b  # all agent roles"
 echo "  ollama pull mxbai-embed-large    # semantic search (optional)"
 echo ""
 echo "Setup complete. Start OllamAGI with:"
