@@ -18,6 +18,7 @@ from core.config import (
 from core.orchestrator import (run_flow, get_flow, get_all_flows, register_log_callback,
                                 _flow_to_dict, get_flow_transcript, request_stop, inject_steer)
 from core.model_router import get_tokens, get_all_tokens, get_session_tokens, reset_session_tokens, chat
+from core.aria_tools import run_aria_loop, ARIA_TOOLS
 
 app = FastAPI(title="OllamAGI", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -92,7 +93,8 @@ async def start_flow(body: dict, background_tasks: BackgroundTasks):
     if not objective:
         return JSONResponse({"error": "objective required"}, status_code=400)
     flow_type = body.get("flow_type") or None
-    background_tasks.add_task(_run_bg, objective, flow_type)
+    base_flows = body.get("base_flows") or []
+    background_tasks.add_task(_run_bg, objective, flow_type, base_flows)
     return JSONResponse({"status": "started", "message": "Flow starting..."})
 
 
@@ -483,17 +485,28 @@ def _assistant_system_context(query: str) -> str:
         lines.append(mem_ctx)
         lines.append("")
 
+    tool_names = [t["function"]["name"] for t in ARIA_TOOLS]
     lines += [
-        "## What you can do",
-        "- Discuss any past project by name or ID, explain what was built, why it failed/succeeded",
-        "- Search memory for technical knowledge (fractal memory has 189+ seed facts + flow learnings)",
-        "- Help plan new flows: suggest flow_type, objective wording, expected subtasks",
-        "- Explain the OllamAGI codebase: orchestrator, agents, fractal memory, docker execution model",
-        "- Give strategic advice on what to build next or how to improve a project",
-        "- Answer technical questions across Python, Docker, security, databases, LLMs, web, data",
+        "## Your Tools",
+        "You have full control over OllamAGI. Call these tools directly — don't just describe what you *could* do, actually do it.",
         "",
-        "When a user asks to run or launch something, tell them the exact objective to type in the Run tab "
-        "and which flow type to select. Do not claim you can execute flows directly.",
+        "| Tool | What it does |",
+        "|---|---|",
+        "| `web_search(query, max_results?)` | Real-time search via SearxNG |",
+        "| `read_file(flow_id, path)` | Read any file from a flow's workspace |",
+        "| `list_files(flow_id)` | List all files a flow produced |",
+        "| `run_flow(objective, flow_type?, base_flow_ids?)` | Launch a new autonomous flow — pass base_flow_ids to give agents access to other projects |",
+        "| `stop_flow(flow_id)` | Stop a running flow immediately |",
+        "| `search_memory(query, limit?)` | Semantic search in fractal memory |",
+        "| `store_memory(content, tags?)` | Save a fact permanently |",
+        "| `get_flow_logs(flow_id, lines?)` | Read flow execution logs |",
+        "",
+        "**When to use tools proactively:**",
+        "- User asks about a project's output → `list_files`, then `read_file`",
+        "- User asks a factual question you're unsure about → `web_search`",
+        "- User wants to combine 2 projects → `run_flow` with `base_flow_ids=[id1, id2]`",
+        "- User wants to launch something → call `run_flow` directly, report the flow ID",
+        "- User asks about a flow's progress or failure → `get_flow_logs`",
     ]
 
     return "\n".join(lines)
@@ -517,28 +530,23 @@ async def assistant_chat(body: dict):
     history = messages[-30:]
     full_messages = [{"role": "system", "content": system_ctx}] + history
 
-    # Stream via thread → queue → async generator (chat() is sync/blocking)
+    # Tool-use loop: thread → queue → async SSE generator
     token_q: queue.Queue = queue.Queue()
-
-    def _stream():
-        try:
-            for token in chat(full_messages, task_type="orchestrator", stream=True):
-                token_q.put(token)
-        except Exception as exc:
-            token_q.put(f"\n\n[Error: {exc}]")
-        finally:
-            token_q.put(None)
-
-    threading.Thread(target=_stream, daemon=True).start()
+    threading.Thread(
+        target=run_aria_loop,
+        args=(history, system_ctx, token_q),
+        daemon=True,
+    ).start()
 
     async def generate():
         loop = asyncio.get_event_loop()
         while True:
-            token = await loop.run_in_executor(None, token_q.get)
-            if token is None:
+            event = await loop.run_in_executor(None, token_q.get)
+            if event is None:
                 yield "data: [DONE]\n\n"
                 break
-            yield f"data: {json.dumps({'token': token})}\n\n"
+            # events from run_aria_loop are already JSON strings
+            yield f"data: {event}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -564,9 +572,10 @@ async def websocket_endpoint(ws: WebSocket):
             _ws_clients.remove(ws)
 
 
-def _run_bg(objective: str, flow_type: str | None):
+def _run_bg(objective: str, flow_type: str | None, base_flows: list | None = None):
     """Run flow in a background thread and broadcast updates."""
     try:
-        flow = run_flow(objective, flow_type=flow_type, broadcast=broadcast_sync)
+        flow = run_flow(objective, flow_type=flow_type, broadcast=broadcast_sync,
+                        base_flows=base_flows or [])
     except Exception as e:
         broadcast_sync({"type": "error", "msg": str(e)})

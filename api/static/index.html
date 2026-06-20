@@ -433,6 +433,22 @@ select.form-input { cursor: pointer; }
 .chat-typing { display: inline-block; width: 6px; height: 14px; background: var(--accent);
                border-radius: 2px; animation: blink .7s infinite; margin-left: 2px; vertical-align: middle; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+.chat-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; min-height: 0; }
+.chat-tool {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+  padding: 3px 9px; border-radius: 12px; font-family: monospace;
+  border: 1px solid; white-space: nowrap;
+}
+.chat-tool.running {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent); color: var(--accent);
+}
+.chat-tool.done {
+  background: color-mix(in srgb, #4ade80 10%, transparent);
+  border-color: #4ade80; color: #4ade80;
+}
+.tool-spin { animation: tspin 1.2s linear infinite; display: inline-block; }
+@keyframes tspin { to { opacity: 0.2 } from { opacity: 1 } }
 .chat-welcome { text-align:center; padding: 40px 20px 20px; color: var(--text2); }
 .chat-welcome-icon { font-size: 40px; margin-bottom: 12px; }
 .chat-welcome h2 { font-size: 20px; color: var(--text); margin-bottom: 8px; }
@@ -1958,6 +1974,7 @@ function _appendChatMsg(role, content, streaming) {
   const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   const nameLabel = role === 'user' ? 'You' : 'Aria';
   div.innerHTML = `
+    <div class="chat-tools" id="${streaming ? 'chat-tool-indicators' : ''}"></div>
     <div class="chat-bubble" id="${streaming ? 'chat-streaming-bubble' : ''}">
       ${streaming ? '<span class="chat-typing"></span>' : _renderMarkdown(content)}
     </div>
@@ -1971,17 +1988,17 @@ function _showChatWelcome() {
   const el = document.getElementById('chat-messages');
   const suggestions = [
     'What projects have we built so far?',
+    'Search the web for the latest LLM benchmarks',
+    'Launch a research flow on Rust async runtimes',
+    'Show me the files from my last flow',
     'What should I build next?',
-    'How does the fractal memory work?',
-    'Explain the agent architecture',
-    'What was the last flow about?',
-    'How do I run a research flow?',
+    'Combine my last 2 projects into one',
   ];
   el.innerHTML = `
     <div class="chat-welcome">
       <div class="chat-welcome-icon">✦</div>
       <h2>Hi, I'm Aria</h2>
-      <p>Your OllamAGI assistant. I have full access to your projects, memory, models, and system.</p>
+      <p>Your OllamAGI assistant. I can search the web, read files, launch flows, and manage everything from here.</p>
       <div>${suggestions.map(s =>
         `<span class="chat-suggestion" onclick="chatSuggest('${s.replace(/'/g,"\\'")}')">
           ${s}
@@ -2038,13 +2055,21 @@ async function sendChat() {
         const data = line.slice(6).trim();
         if (data === '[DONE]') break;
         try {
-          const {token} = JSON.parse(data);
-          if (token) {
-            accumulated += token;
-            const bubble = document.getElementById('chat-streaming-bubble');
-            if (bubble) {
-              bubble.innerHTML = _renderMarkdown(accumulated) + '<span class="chat-typing"></span>';
-              _chatScrollBottom();
+          const ev = JSON.parse(data);
+          if (ev.type === 'tool_start') {
+            _chatToolStart(ev.name, ev.args);
+          } else if (ev.type === 'tool_done') {
+            _chatToolDone(ev.name);
+          } else {
+            // token event (ev.type === 'token' or legacy {token: "..."})
+            const tok = ev.token || (ev.type === undefined ? ev.token : null);
+            if (tok) {
+              accumulated += tok;
+              const bubble = document.getElementById('chat-streaming-bubble');
+              if (bubble) {
+                bubble.innerHTML = _renderMarkdown(accumulated) + '<span class="chat-typing"></span>';
+                _chatScrollBottom();
+              }
             }
           }
         } catch {}
@@ -2067,6 +2092,36 @@ async function sendChat() {
   document.getElementById('chat-send-btn').textContent = '↑';
   // Re-highlight any code blocks rendered
   document.querySelectorAll('#chat-messages pre code').forEach(b => hljs.highlightElement(b));
+}
+
+function _toolIcon(name) {
+  return {web_search:'🔍',read_file:'📄',list_files:'📁',run_flow:'▶',
+          stop_flow:'⏹',search_memory:'🧠',store_memory:'💾',get_flow_logs:'📋'}[name] || '⚙';
+}
+
+function _chatToolStart(name, args) {
+  const container = document.getElementById('chat-tool-indicators');
+  if (!container) return;
+  const argsStr = Object.entries(args || {})
+    .map(([k,v]) => `${k}=${JSON.stringify(v).slice(0,45)}`)
+    .join(', ');
+  const pill = document.createElement('span');
+  pill.className = 'chat-tool running';
+  pill.dataset.tool = name;
+  pill.innerHTML = `${_toolIcon(name)} ${name}(<em>${argsStr}</em>) <span class="tool-spin">…</span>`;
+  container.appendChild(pill);
+  _chatScrollBottom();
+}
+
+function _chatToolDone(name) {
+  const container = document.getElementById('chat-tool-indicators');
+  if (!container) return;
+  const pills = [...container.querySelectorAll(`.chat-tool.running[data-tool="${name}"]`)];
+  const pill = pills[pills.length - 1];
+  if (!pill) return;
+  pill.classList.replace('running', 'done');
+  const spin = pill.querySelector('.tool-spin');
+  if (spin) spin.textContent = '✓';
 }
 
 function chatKeyDown(e) {

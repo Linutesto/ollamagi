@@ -444,6 +444,95 @@ def _execution_failed(exit_code: int, output: str) -> bool:
     return any(re.search(pattern, output or "") for pattern in _FATAL_OUTPUT_PATTERNS)
 
 
+def _detect_referenced_flow_ids(objective: str) -> list[str]:
+    """Find 8-char flow ID prefixes in objective text that match existing workspaces."""
+    if not WORKSPACE_DIR.exists():
+        return []
+    existing = {d.name for d in WORKSPACE_DIR.iterdir() if d.is_dir()}
+    found, seen = [], set()
+    for candidate in re.findall(r'\b([0-9a-f]{8,32})\b', objective.lower()):
+        for name in existing:
+            if name.startswith(candidate) and name not in seen:
+                found.append(name)
+                seen.add(name)
+    return found
+
+
+def _build_cross_flow_context(ref_flow_ids: list[str]) -> str:
+    """Build a context block describing referenced flows and their artifacts."""
+    if not ref_flow_ids:
+        return ""
+    KEY_NAMES = {"main.py", "app.py", "index.py", "server.py", "pipeline.py",
+                 "readme.md", "report.md", "analysis.md", "output.md"}
+    sections = [
+        "## Referenced Projects\n"
+        "*Files from these projects are available in the new flow's workspace at "
+        "/work/_context/{flow_id}/ — read them before writing code that builds on prior work.*\n"
+    ]
+    skip = {"flow.json", "flow_log.jsonl", "llm_calls.jsonl"}
+    for flow_id in ref_flow_ids:
+        work_dir = WORKSPACE_DIR / flow_id
+        if not work_dir.exists():
+            continue
+        meta = {}
+        meta_file = work_dir / "flow.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text())
+            except Exception:
+                pass
+        title = (meta.get("title") or meta.get("objective") or flow_id)[:70]
+        status = meta.get("status", "?")
+        ftype = meta.get("flow_type", "?")
+        files = [
+            (str(f.relative_to(work_dir)), f.stat().st_size, f)
+            for f in sorted(work_dir.rglob("*"))
+            if f.is_file() and f.name not in skip
+        ]
+        sections.append(f"### [{flow_id}] {title}")
+        sections.append(f"Status: {status} | Type: {ftype}")
+        if files:
+            for rel, sz, _ in files[:15]:
+                sections.append(f"  /work/_context/{flow_id}/{rel}  ({sz:,} B)")
+            if len(files) > 15:
+                sections.append(f"  … and {len(files)-15} more files")
+        # Inline preview of first key file found
+        for rel, sz, fpath in files:
+            if fpath.name.lower() in KEY_NAMES and sz < 6000:
+                try:
+                    content = fpath.read_text(errors="replace")[:2500]
+                    lang = "python" if fpath.suffix == ".py" else ""
+                    sections.append(f"\n```{lang}\n# {rel}\n{content}\n```")
+                    break
+                except Exception:
+                    pass
+        sections.append("")
+    return "\n".join(sections) if len(sections) > 1 else ""
+
+
+def _copy_referenced_workspaces(flow_id: str, ref_flow_ids: list[str]):
+    """Copy referenced flow workspaces into _context/ so agents can read them."""
+    import shutil
+    skip = {"flow.json", "flow_log.jsonl", "llm_calls.jsonl"}
+    context_root = WORKSPACE_DIR / flow_id / "_context"
+    context_root.mkdir(parents=True, exist_ok=True)
+    for ref_id in ref_flow_ids:
+        src = WORKSPACE_DIR / ref_id
+        if not src.exists():
+            continue
+        dst = context_root / ref_id
+        dst.mkdir(exist_ok=True)
+        for src_file in src.rglob("*"):
+            if src_file.is_file() and src_file.name not in skip:
+                rel = src_file.relative_to(src)
+                dst_file = dst / rel
+                dst_file.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(src_file, dst_file)
+                except Exception:
+                    pass
+
+
 def _workspace_inventory(flow_id: str, limit: int = 80) -> str:
     paths = []
     for path in sync_workspace(flow_id):
@@ -2084,7 +2173,8 @@ def _repair_final_deliverables(
 # ── Main flow runner ──────────────────────────────────────────────────────────
 def run_flow(objective: str, flow_type: str | None = None,
              broadcast: Callable | None = None,
-             tasks: list[dict] | None = None) -> Flow:
+             tasks: list[dict] | None = None,
+             base_flows: list[str] | None = None) -> Flow:
     flow_id = uuid.uuid4().hex[:8]
     detected_type = flow_type or _detect_flow_type(objective)
     title = objective[:60] + ("..." if len(objective) > 60 else "")
@@ -2139,9 +2229,22 @@ def run_flow(objective: str, flow_type: str | None = None,
     log(f"Flow {flow_id} started — type: {detected_type}")
     _save(flow)
 
+    # Resolve cross-flow references (explicit + auto-detected from objective)
+    auto_ref = _detect_referenced_flow_ids(objective)
+    explicit_ref = [r for r in (base_flows or []) if r]
+    ref_flow_ids = list(dict.fromkeys(explicit_ref + auto_ref))  # dedup, explicit first
+    cross_ctx = ""
+    if ref_flow_ids:
+        cross_ctx = _build_cross_flow_context(ref_flow_ids)
+        _copy_referenced_workspaces(flow_id, ref_flow_ids)
+        log(f"Cross-flow context: {len(ref_flow_ids)} project(s) loaded — {', '.join(r[:8] for r in ref_flow_ids)}")
+
     mem_ctx = context_for_task(objective)
     if mem_ctx:
         log(f"Memory: {len(mem_ctx.splitlines())} relevant entries loaded")
+
+    # Combined context: cross-flow first so agents see referenced code before general knowledge
+    mem_ctx = "\n\n".join(filter(None, [cross_ctx, mem_ctx]))
 
     try:
         flow.status = "running"
