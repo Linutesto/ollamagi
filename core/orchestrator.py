@@ -349,9 +349,19 @@ def _objective_constraints(objective: str, flow_type: str) -> str:
             "risks, validation steps, and a concrete next action."
         )
     if flow_type == "security":
+        from core.config import SSH_HOST, SSH_USER
         rules.append(
-            "Operate only within explicit authorized scope. Tool errors, unreachable hosts, and empty "
-            "findings are reportable outcomes, not reasons to omit the final assessment report."
+            f"TARGET HOST: {SSH_HOST} (Fedora host, authorized pentest scope). "
+            f"SSH user: {SSH_USER}. SSH key at /root/.ssh/id_ed25519 is pre-configured.\n"
+            "Security flows MUST follow this active pentest workflow — do NOT generate schema, "
+            "documentation, or Python validation tasks:\n"
+            "  1. Reconnaissance — nmap port+OS scan, banner grabbing\n"
+            "  2. Enumeration — nikto on web ports, gobuster/ffuf for dirs, enum4linux for SMB\n"
+            "  3. Vulnerability assessment — nuclei, searchsploit, CVE lookup\n"
+            "  4. Exploitation — within authorized scope\n"
+            "  5. Report — executive summary with CVSS scores, PoC evidence, remediation steps\n"
+            "All tasks must use agent='pentester', needs_container=true, container_type='pentest'. "
+            "Tool errors and empty findings are valid reportable outcomes — never skip the final report."
         )
     if flow_type == "data_engineering":
         rules.append(
@@ -1393,6 +1403,14 @@ def _generate_tasks(flow: Flow, mem_ctx: str) -> list[Task]:
         "No markdown."
     )
     user_parts = [f"OBJECTIVE: {flow.objective}"]
+    if flow.flow_type == "security":
+        from core.config import SSH_HOST, SSH_USER
+        user_parts.append(
+            f"TARGET: {SSH_HOST} (authorized Fedora host). SSH user: {SSH_USER}. "
+            "All tasks must be agent='pentester', needs_container=true, container_type='pentest'. "
+            "Generate ACTIVE testing tasks only: nmap recon, service enumeration, "
+            "vuln scanning, exploitation, report. NO schema/validation/documentation tasks."
+        )
     if mem_ctx:
         user_parts.append(mem_ctx)
     raw = chat(
@@ -1456,6 +1474,16 @@ def _generate_subtasks(task: Task, flow: Flow, mem_ctx: str) -> list[Subtask]:
         "No markdown."
     )
     user = f"TASK: {task.title}\n\nDESCRIPTION: {task.description}"
+    if flow.flow_type == "security":
+        from core.config import SSH_HOST, SSH_USER
+        user += (
+            f"\n\nPENTEST CONTEXT: All subtasks must use agent='pentester', "
+            f"needs_container=true, container_type='pentest'. "
+            f"TARGET HOST: {SSH_HOST} (SSH user: {SSH_USER}). "
+            "Generate subtasks that run actual Kali tools (nmap, nikto, nuclei, gobuster, etc.) "
+            "against the target. Each subtask should have deliverable_kind='report' or 'artifact' "
+            "with expected_artifacts pointing to scan output files in /work/."
+        )
     if mem_ctx:
         user += f"\n\n{mem_ctx}"
     raw = chat(
@@ -2070,21 +2098,46 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         return "[FAILED — max retries exceeded]"
 
     else:
-        script_prompt = (
-            f"Write a bash script for this subtask:\n{subtask.description}\n"
-            f"{contract_text}\n"
-            "Environment: Debian Linux container with apt-get. "
-            "python3 and pip3 may not be pre-installed — if you need them, add: "
-            "apt-get install -y -qq python3 python3-pip 2>/dev/null || true\n"
-            "Do NOT use heredocs. Do NOT embed Python code inline in bash.\n"
-            "Do NOT assume any tool is available — install what you need via apt-get.\n"
-            "Start with strict error handling. Inspect /work for equivalent input files before failing.\n"
-            "Create parent directories before writing. Exit non-zero if required output is missing.\n"
-            "The script MUST terminate. Never launch a daemon, server, watcher, scheduler, or infinite loop.\n"
-            "For long-running applications, run only one bounded smoke-test cycle.\n"
-            "Never require credentials or contact invented/private API endpoints during validation.\n"
-            "Save all outputs to /work/. Return ONLY the bash script, no markdown."
-        )
+        is_pentest = subtask.container_type == "pentest" or subtask.agent == "pentester"
+        if is_pentest:
+            from core.config import SSH_HOST, SSH_USER
+            script_prompt = (
+                f"Write a bash script for this penetration testing subtask:\n{subtask.description}\n"
+                f"{contract_text}\n"
+                f"## Environment: Kali Linux container — authorized to pentest {SSH_HOST}\n"
+                "ALL tools are PRE-INSTALLED — do NOT apt-get install anything:\n"
+                "  nmap, masscan, nikto, gobuster, ffuf, nuclei, sqlmap, hydra, john, hashcat,\n"
+                "  searchsploit, metasploit (msfconsole/msfvenom), netcat, curl, wget, openssl,\n"
+                "  enum4linux, smbclient, rpcclient, crackmapexec, impacket-*, whatweb, wafw00f\n"
+                f"## Target\n"
+                f"  HOST: {SSH_HOST}\n"
+                f"  SSH:  ssh {SSH_USER}@{SSH_HOST}   (key already at /root/.ssh/id_ed25519)\n"
+                "## Rules\n"
+                "- Run actual tools against the target — passive/offline analysis alone is NOT a pentest\n"
+                "- Use timing flags: nmap -T4, nuclei -timeout 10, gobuster -t 20\n"
+                "- Append '|| true' after scans that exit non-zero on no-results (nuclei, gobuster)\n"
+                "- Save ALL tool output to /work/ (nmap XML with -oX, nikto -o, nuclei -o, etc.)\n"
+                "- Exit non-zero ONLY on true failure (tool missing, SSH down, etc.)\n"
+                "- Do NOT use heredocs. Do NOT start daemons or interactive sessions.\n"
+                "- The script must terminate on its own — no infinite loops, no msfconsole -q\n"
+                "Return ONLY the bash script — no markdown."
+            )
+        else:
+            script_prompt = (
+                f"Write a bash script for this subtask:\n{subtask.description}\n"
+                f"{contract_text}\n"
+                "Environment: Debian Linux container with apt-get. "
+                "python3 and pip3 may not be pre-installed — if you need them, add: "
+                "apt-get install -y -qq python3 python3-pip 2>/dev/null || true\n"
+                "Do NOT use heredocs. Do NOT embed Python code inline in bash.\n"
+                "Do NOT assume any tool is available — install what you need via apt-get.\n"
+                "Start with strict error handling. Inspect /work for equivalent input files before failing.\n"
+                "Create parent directories before writing. Exit non-zero if required output is missing.\n"
+                "The script MUST terminate. Never launch a daemon, server, watcher, scheduler, or infinite loop.\n"
+                "For long-running applications, run only one bounded smoke-test cycle.\n"
+                "Never require credentials or contact invented/private API endpoints during validation.\n"
+                "Save all outputs to /work/. Return ONLY the bash script, no markdown."
+            )
         messages = history + [{"role": "user", "content": script_prompt}]
         script = _strip_fences(run_agent(subtask.agent, messages, extra_ctx, flow_id=flow_id))
 
