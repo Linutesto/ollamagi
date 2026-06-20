@@ -405,6 +405,42 @@ select.form-input { cursor: pointer; }
 .llm-content { font-family: 'Courier New', monospace; font-size: 11.5px; color: var(--text);
                white-space: pre-wrap; word-break: break-word; line-height: 1.5;
                max-height: 350px; overflow-y: auto; background: var(--bg); padding: 6px 8px; border-radius: 4px; }
+/* CHAT */
+#chat-messages { display: flex; flex-direction: column; gap: 14px; padding-bottom: 8px; }
+.chat-msg { display: flex; flex-direction: column; gap: 4px; max-width: 92%; }
+.chat-msg.user { align-self: flex-end; align-items: flex-end; }
+.chat-msg.assistant { align-self: flex-start; align-items: flex-start; }
+.chat-bubble { padding: 10px 14px; border-radius: 16px; font-size: 14px; line-height: 1.55;
+               word-break: break-word; }
+.chat-msg.user .chat-bubble { background: var(--accent); color: #000; border-bottom-right-radius: 4px; }
+.chat-msg.assistant .chat-bubble { background: var(--bg2); border: 1px solid var(--border);
+                                    border-bottom-left-radius: 4px; color: var(--text); }
+.chat-bubble code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px;
+                    font-family: monospace; font-size: 12px; }
+.chat-bubble pre { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+                   padding: 10px 12px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.4; }
+.chat-bubble pre code { background: none; padding: 0; font-size: 12px; }
+.chat-bubble p { margin-bottom: 6px; }
+.chat-bubble p:last-child { margin-bottom: 0; }
+.chat-bubble ul, .chat-bubble ol { padding-left: 18px; margin-bottom: 6px; }
+.chat-bubble li { margin-bottom: 3px; }
+.chat-bubble h1,.chat-bubble h2,.chat-bubble h3 { margin: 8px 0 4px;
+  font-size: 14px; font-weight: 700; color: var(--accent); }
+.chat-bubble strong { font-weight: 700; }
+.chat-bubble em { font-style: italic; color: var(--text2); }
+.chat-bubble a { color: var(--accent); }
+.chat-meta { font-size: 10px; color: var(--text2); padding: 0 4px; }
+.chat-typing { display: inline-block; width: 6px; height: 14px; background: var(--accent);
+               border-radius: 2px; animation: blink .7s infinite; margin-left: 2px; vertical-align: middle; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+.chat-welcome { text-align:center; padding: 40px 20px 20px; color: var(--text2); }
+.chat-welcome-icon { font-size: 40px; margin-bottom: 12px; }
+.chat-welcome h2 { font-size: 20px; color: var(--text); margin-bottom: 8px; }
+.chat-welcome p { font-size: 13px; line-height: 1.5; max-width: 300px; margin: 0 auto 16px; }
+.chat-suggestion { display:inline-block; background:var(--bg3); border:1px solid var(--border);
+                   border-radius:20px; padding:6px 14px; font-size:12px; margin:4px;
+                   cursor:pointer; color:var(--text2); }
+.chat-suggestion:active { background:var(--bg2); color:var(--accent); }
 </style>
 </head>
 <body>
@@ -602,7 +638,29 @@ select.form-input { cursor: pointer; }
     </div>
   </div>
 
+  <!-- CHAT PAGE -->
+  <div class="page" id="page-chat">
+    <div id="chat-messages"></div>
+    <div style="height:70px"></div><!-- spacer for fixed input -->
+  </div>
+
 </div><!-- /pages -->
+
+<!-- CHAT INPUT BAR (fixed above nav) -->
+<div id="chat-bar" style="display:none; position:fixed; bottom:var(--nav-h); left:0; right:0;
+     background:var(--bg2); border-top:1px solid var(--border); padding:8px 10px; z-index:50;
+     display:none; gap:8px; align-items:flex-end;">
+  <textarea id="chat-input" placeholder="Ask Aria about your projects…"
+    style="flex:1; background:var(--bg3); border:1px solid var(--border); border-radius:10px;
+           color:var(--text); padding:9px 12px; font-size:14px; resize:none; max-height:120px;
+           min-height:40px; line-height:1.4; font-family:inherit; outline:none;"
+    rows="1" onkeydown="chatKeyDown(event)" oninput="autoResize(this)"></textarea>
+  <button onclick="sendChat()" id="chat-send-btn"
+    style="background:var(--accent); color:#000; border:none; border-radius:10px;
+           padding:9px 16px; font-size:14px; font-weight:700; cursor:pointer; flex-shrink:0; height:40px;">
+    ↑
+  </button>
+</div>
 
 <!-- BOTTOM NAV -->
 <nav class="nav">
@@ -613,15 +671,15 @@ select.form-input { cursor: pointer; }
   <button class="nav-btn" id="nav-run" onclick="switchTab('run')">
     <span class="nav-icon">▶</span>Run
   </button>
-  <button class="nav-btn" id="nav-terminal" onclick="switchTab('terminal')">
-    <span class="nav-icon">⌨</span>Terminal
+  <button class="nav-btn" id="nav-chat" onclick="switchTab('chat')">
+    <span class="nav-icon">✦</span>Aria
+  </button>
+  <button class="nav-btn" id="nav-memory" onclick="switchTab('memory')">
+    <span class="nav-icon">⬡</span>Memory
   </button>
   <button class="nav-btn" id="nav-logs" onclick="switchTab('logs')">
     <span class="nav-icon">≡</span>Logs
     <span class="nav-badge hidden" id="badge-logs">0</span>
-  </button>
-  <button class="nav-btn" id="nav-memory" onclick="switchTab('memory')">
-    <span class="nav-icon">⬡</span>Memory
   </button>
   <button class="nav-btn" id="nav-system" onclick="switchTab('system')">
     <span class="nav-icon">⚙</span>System
@@ -811,6 +869,9 @@ function switchTab(tab) {
   if (tab === 'system') loadSystemStats();
   if (tab === 'flows')    loadFlows();
   if (tab === 'terminal') termRefreshFlowList();
+  // Show/hide fixed chat bar
+  const chatBar = document.getElementById('chat-bar');
+  if (chatBar) chatBar.style.display = tab === 'chat' ? 'flex' : 'none';
 }
 
 function goBack() {
@@ -1838,6 +1899,184 @@ function downloadFile(flowId) {
   document.body.removeChild(a);
 }
 
+// ── CHAT ──
+let _chatHistory = [];   // {role, content}
+let _chatStreaming = false;
+
+function _renderMarkdown(text) {
+  // Escape HTML first
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Code blocks first (protect from inline processing)
+  const blocks = [];
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const idx = blocks.length;
+    const highlighted = lang && hljs.getLanguage(lang)
+      ? hljs.highlight(code.trim(), {language: lang}).value
+      : esc(code.trim());
+    blocks.push(`<pre><code class="hljs language-${lang || 'text'}">${highlighted}</code></pre>`);
+    return `\x00BLOCK${idx}\x00`;
+  });
+  // Inline code
+  text = text.replace(/`([^`]+)`/g, (_, c) => `<code>${esc(c)}</code>`);
+  // Bold/italic
+  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Headers
+  text = text.replace(/^#{3}\s+(.+)$/gm, '<h3>$1</h3>');
+  text = text.replace(/^#{2}\s+(.+)$/gm, '<h2>$1</h2>');
+  text = text.replace(/^#{1}\s+(.+)$/gm, '<h2>$1</h2>');
+  // Unordered lists
+  text = text.replace(/^[\*\-]\s+(.+)$/gm, '<li>$1</li>');
+  text = text.replace(/(<li>.*<\/li>\n?)+/g, m => `<ul>${m}</ul>`);
+  // Ordered lists
+  text = text.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
+  // Horizontal rule
+  text = text.replace(/^---+$/gm, '<hr style="border-color:var(--border);margin:8px 0">');
+  // Paragraphs (double newlines → p tags)
+  text = text.split(/\n\n+/).map(p => {
+    p = p.trim();
+    if (!p) return '';
+    if (/^<(ul|ol|li|h[123]|pre|hr)/.test(p)) return p;
+    return `<p>${p.replace(/\n/g,'<br>')}</p>`;
+  }).join('');
+  // Restore code blocks
+  blocks.forEach((b, i) => { text = text.replace(`\x00BLOCK${i}\x00`, b); });
+  return text;
+}
+
+function _chatScrollBottom() {
+  const page = document.getElementById('page-chat');
+  if (page) page.scrollTop = page.scrollHeight;
+}
+
+function _appendChatMsg(role, content, streaming) {
+  const el = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.id = streaming ? 'chat-streaming-msg' : '';
+  const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const nameLabel = role === 'user' ? 'You' : 'Aria';
+  div.innerHTML = `
+    <div class="chat-bubble" id="${streaming ? 'chat-streaming-bubble' : ''}">
+      ${streaming ? '<span class="chat-typing"></span>' : _renderMarkdown(content)}
+    </div>
+    <div class="chat-meta">${nameLabel} · ${ts}</div>`;
+  el.appendChild(div);
+  _chatScrollBottom();
+  return div;
+}
+
+function _showChatWelcome() {
+  const el = document.getElementById('chat-messages');
+  const suggestions = [
+    'What projects have we built so far?',
+    'What should I build next?',
+    'How does the fractal memory work?',
+    'Explain the agent architecture',
+    'What was the last flow about?',
+    'How do I run a research flow?',
+  ];
+  el.innerHTML = `
+    <div class="chat-welcome">
+      <div class="chat-welcome-icon">✦</div>
+      <h2>Hi, I'm Aria</h2>
+      <p>Your OllamAGI assistant. I have full access to your projects, memory, models, and system.</p>
+      <div>${suggestions.map(s =>
+        `<span class="chat-suggestion" onclick="chatSuggest('${s.replace(/'/g,"\\'")}')">
+          ${s}
+        </span>`
+      ).join('')}</div>
+    </div>`;
+}
+
+function chatSuggest(text) {
+  document.getElementById('chat-input').value = text;
+  sendChat();
+}
+
+async function sendChat() {
+  if (_chatStreaming) return;
+  const input = document.getElementById('chat-input');
+  const text = (input.value || '').trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  // Clear welcome screen on first message
+  const el = document.getElementById('chat-messages');
+  if (el.querySelector('.chat-welcome')) el.innerHTML = '';
+
+  // Add user message to UI and history
+  _appendChatMsg('user', text, false);
+  _chatHistory.push({role: 'user', content: text});
+
+  // Show streaming bubble
+  _chatStreaming = true;
+  document.getElementById('chat-send-btn').textContent = '…';
+  _appendChatMsg('assistant', '', true);
+
+  let accumulated = '';
+  try {
+    const resp = await fetch('/api/assistant/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({messages: _chatHistory}),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream: true});
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') break;
+        try {
+          const {token} = JSON.parse(data);
+          if (token) {
+            accumulated += token;
+            const bubble = document.getElementById('chat-streaming-bubble');
+            if (bubble) {
+              bubble.innerHTML = _renderMarkdown(accumulated) + '<span class="chat-typing"></span>';
+              _chatScrollBottom();
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch (err) {
+    accumulated = `[Error: ${err.message}]`;
+  }
+
+  // Finalise the streaming bubble
+  const streamMsg = document.getElementById('chat-streaming-msg');
+  if (streamMsg) {
+    streamMsg.id = '';
+    const bubble = document.getElementById('chat-streaming-bubble');
+    if (bubble) { bubble.id = ''; bubble.innerHTML = _renderMarkdown(accumulated || '…'); }
+  }
+  if (accumulated) _chatHistory.push({role: 'assistant', content: accumulated});
+  _chatScrollBottom();
+  _chatStreaming = false;
+  document.getElementById('chat-send-btn').textContent = '↑';
+  // Re-highlight any code blocks rendered
+  document.querySelectorAll('#chat-messages pre code').forEach(b => hljs.highlightElement(b));
+}
+
+function chatKeyDown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
 // ── INIT ──
 connectWS();
 loadFlows();
@@ -1845,6 +2084,8 @@ loadTokens();
 populateQuickList();
 setInterval(loadFlows, 10000);
 setInterval(loadTokens, 6000);
+// Show chat welcome when tab is first opened
+document.addEventListener('DOMContentLoaded', () => { _showChatWelcome(); });
 </script>
 </body>
 </html>

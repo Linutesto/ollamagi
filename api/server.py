@@ -1,8 +1,9 @@
 """OllamAGI FastAPI server — complete REST API + WebSocket + static dashboard."""
 import asyncio
 import json
+import queue
 import threading
-import uuid
+import time
 import urllib.request
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from core.config import (
 )
 from core.orchestrator import (run_flow, get_flow, get_all_flows, register_log_callback,
                                 _flow_to_dict, get_flow_transcript, request_stop, inject_steer)
-from core.model_router import get_tokens, get_all_tokens, get_session_tokens, reset_session_tokens
+from core.model_router import get_tokens, get_all_tokens, get_session_tokens, reset_session_tokens, chat
 
 app = FastAPI(title="OllamAGI", version="1.0.0")
 STATIC_DIR = Path(__file__).parent / "static"
@@ -388,6 +389,161 @@ async def flow_download(flow_id: str):
         iter([buf.read()]),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _assistant_system_context(query: str) -> str:
+    """Build a rich system context for the assistant from live system state."""
+    # Ollama status
+    try:
+        with urllib.request.urlopen(f"{OLLAMA_URL.rstrip('/')}/api/tags", timeout=3) as r:
+            models = json.loads(r.read()).get("models", [])
+            model_names = [m["name"] for m in models]
+    except Exception:
+        model_names = []
+
+    # Memory stats
+    try:
+        from core.fractal_memory import stats as fstats, context_for_task
+        ms = fstats()
+        mem_ctx = context_for_task(query, limit=8) if query.strip() else ""
+    except Exception:
+        ms = {}
+        mem_ctx = ""
+
+    # Recent flows from disk
+    recent_flows = []
+    if WORKSPACE_DIR.exists():
+        paths = sorted(WORKSPACE_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
+        for d in paths[:20]:
+            sf = d / "flow.json"
+            if sf.exists():
+                try:
+                    f = json.loads(sf.read_text())
+                    recent_flows.append(f)
+                except Exception:
+                    pass
+
+    # Workspace summary for recent finished flows
+    workspace_summary = []
+    for f in recent_flows[:5]:
+        if f.get("status") in ("finished", "failed"):
+            work_dir = WORKSPACE_DIR / f["id"]
+            if work_dir.exists():
+                files = [
+                    str(p.relative_to(work_dir))
+                    for p in sorted(work_dir.rglob("*"))
+                    if p.is_file() and p.name not in ("flow.json", "flow_log.jsonl", "llm_calls.jsonl")
+                    and not p.name.endswith((".pyc", ".pyo"))
+                ][:12]
+                if files:
+                    workspace_summary.append(
+                        f"  [{f.get('id','?')[:8]}] {f.get('title', f.get('objective','?'))[:60]}: "
+                        + ", ".join(files[:6]) + ("…" if len(files) > 6 else "")
+                    )
+
+    lines = [
+        "You are Aria, the OllamAGI Assistant — an intelligent, direct, and knowledgeable companion "
+        "built into the OllamAGI autonomous agent platform.",
+        "",
+        "You have full awareness of this system and all its projects. You speak as someone who lives "
+        "inside this machine and knows everything that's been built here. Be direct, technical, concrete, "
+        "and opinionated when asked. Format code in markdown code blocks. Use bullet points for lists.",
+        "",
+        "## System",
+        f"- Hardware: {HW_CPU or 'Ryzen 9 7950X'} · {HW_GPU or 'RTX 4090'} · {HW_RAM or '96GB RAM'}",
+        f"- Ollama: {len(model_names)} models — {', '.join(model_names[:8])}{'…' if len(model_names) > 8 else ''}",
+        f"- Memory: {ms.get('total_nodes', 0)} nodes · {ms.get('by_level', {}).get(0, 0)} raw memories · {ms.get('db_size_kb', 0) // 1024:.1f} MB",
+        f"- Flow types available: agent_development, product_development, research, security, data_engineering, devops, automation, content, general",
+        "",
+    ]
+
+    if recent_flows:
+        lines.append("## All Projects (newest first)")
+        for f in recent_flows:
+            ts = time.strftime("%Y-%m-%d", time.localtime(f.get("created_at", 0)))
+            status = f.get("status", "?")
+            status_icon = {"finished": "✓", "failed": "✗", "running": "⟳", "stopped": "⊘"}.get(status, "·")
+            tok = f.get("_tokens", {})
+            tok_str = f" · {tok.get('total', 0) // 1000}k tok" if tok.get("total", 0) > 1000 else ""
+            mem_str = f" · {f.get('memory_items_stored', 0)} memories" if f.get("memory_items_stored") else ""
+            lines.append(
+                f"{status_icon} [{f.get('flow_type', '?')}] {f.get('title', f.get('objective', '?'))[:70]} "
+                f"({ts}{tok_str}{mem_str}) id={f.get('id', '?')[:8]}"
+            )
+        lines.append("")
+
+    if workspace_summary:
+        lines.append("## Recent Workspace Files")
+        lines.extend(workspace_summary)
+        lines.append("")
+
+    if mem_ctx:
+        lines.append("## Relevant Knowledge (from fractal memory)")
+        lines.append(mem_ctx)
+        lines.append("")
+
+    lines += [
+        "## What you can do",
+        "- Discuss any past project by name or ID, explain what was built, why it failed/succeeded",
+        "- Search memory for technical knowledge (fractal memory has 189+ seed facts + flow learnings)",
+        "- Help plan new flows: suggest flow_type, objective wording, expected subtasks",
+        "- Explain the OllamAGI codebase: orchestrator, agents, fractal memory, docker execution model",
+        "- Give strategic advice on what to build next or how to improve a project",
+        "- Answer technical questions across Python, Docker, security, databases, LLMs, web, data",
+        "",
+        "When a user asks to run or launch something, tell them the exact objective to type in the Run tab "
+        "and which flow type to select. Do not claim you can execute flows directly.",
+    ]
+
+    return "\n".join(lines)
+
+
+@app.post("/api/assistant/chat")
+async def assistant_chat(body: dict):
+    """Streaming SSE chat endpoint for the Aria assistant."""
+    messages = body.get("messages", [])
+    if not messages:
+        return JSONResponse({"error": "messages required"}, status_code=400)
+
+    # Extract last user message for memory context injection
+    last_user = next(
+        (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
+    )
+
+    system_ctx = _assistant_system_context(last_user[:500])
+
+    # Keep last 30 turns to stay within context limits
+    history = messages[-30:]
+    full_messages = [{"role": "system", "content": system_ctx}] + history
+
+    # Stream via thread → queue → async generator (chat() is sync/blocking)
+    token_q: queue.Queue = queue.Queue()
+
+    def _stream():
+        try:
+            for token in chat(full_messages, task_type="orchestrator", stream=True):
+                token_q.put(token)
+        except Exception as exc:
+            token_q.put(f"\n\n[Error: {exc}]")
+        finally:
+            token_q.put(None)
+
+    threading.Thread(target=_stream, daemon=True).start()
+
+    async def generate():
+        loop = asyncio.get_event_loop()
+        while True:
+            token = await loop.run_in_executor(None, token_q.get)
+            if token is None:
+                yield "data: [DONE]\n\n"
+                break
+            yield f"data: {json.dumps({'token': token})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache, no-store"},
     )
 
 
