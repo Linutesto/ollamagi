@@ -1646,6 +1646,12 @@ def _fix_python(code: str, error_output: str, description: str, flow_id: str | N
         "triple-quoted strings because their docstrings will terminate the outer string. Write file "
         "content using a list of ordinary quoted lines joined with '\\n', JSON-decoded strings, or "
         "another syntax-safe method. Do not use ''' or \\\"\\\"\\\" anywhere in the build script.\n"
+        "PYTHON SYNTAX RULES — common LLM mistakes:\n"
+        "  - `with` / `async with` blocks do NOT support `else`. Only `for`, `while`, and `try` support `else`.\n"
+        "  - `async for` and `async with` follow the same else-clause rules as their sync counterparts.\n"
+        "  - Variables assigned inside `async with` are NOT in scope after the block unless assigned before.\n"
+        "If the error is a SyntaxError in a /work/*.py file (not the build script itself), the build "
+        "script is writing BROKEN CONTENT to that file. Fix the content string/lines that get written.\n"
         "For web crawlers, use local HTML fixtures or a temporary localhost HTTP server rather than "
         "external test domains. Handled 404/timeouts are test evidence, not fatal build failures.\n"
         "IMPORTANT — when a /work/*.py application fails at runtime (e.g. local HTTP server returns 404 "
@@ -1957,6 +1963,10 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             "- NEVER place generated multi-line source inside triple-quoted strings; nested "
             "docstrings will break the build script. Use lists of ordinary quoted lines joined "
             "with '\\n' or JSON-decoded string literals. Do not use triple quotes anywhere\n"
+            "- PYTHON SYNTAX: `with` / `async with` blocks do NOT support `else`. Only `for`, `while`, "
+            "and `try` blocks support `else`. This is a common mistake — never write `async with ...: ... else: ...`\n"
+            "- Variables that must be used after a `with` block must be declared before it or assigned "
+            "outside the block (e.g. `result = None` before `with`, then `result = value` inside)\n"
             "- For implementation tasks, the build script MUST write the requested source files "
             "(.py/.js/etc.) into /work; executing code only from /tmp does not count\n"
             "- Preserve and improve existing /work source files instead of replacing them with placeholders\n"
@@ -2030,7 +2040,8 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
                     return f"[FAILED after {attempt+1} attempts]\n{syntax_error}"
                 container = create_container(flow.id, f"{subtask.id}-a{attempt}", subtask.container_type)
                 exit_code, output = exec_python(container, _REQ_PREAMBLE + code, timeout=MAX_TASK_TIMEOUT)
-                if not _execution_failed(exit_code, output):
+                execution_failed = _execution_failed(exit_code, output)
+                if not execution_failed:
                     valid, artifacts, validation = _validate_execution(
                         flow.id, subtask, before, output
                     )
@@ -2040,7 +2051,7 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
                         visible_output = output[-3500:] if output else ""
                         return f"{visible_output}\n\n[VALIDATION] {validation}".strip()
                     output = f"{output}\n\n{validation}".strip()
-                if exit_code == 0:
+                elif exit_code == 0:
                     output += "\nDetected fatal error text despite exit code 0."
                 # Non-zero exit — auto-fix if retries remain
                 if attempt < MAX_RETRIES:
@@ -2083,7 +2094,8 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             try:
                 container = create_container(flow.id, f"{subtask.id}-a{attempt}", subtask.container_type)
                 exit_code, output = exec_script(container, script, timeout=MAX_TASK_TIMEOUT)
-                if not _execution_failed(exit_code, output):
+                execution_failed = _execution_failed(exit_code, output)
+                if not execution_failed:
                     valid, artifacts, validation = _validate_execution(
                         flow.id, subtask, before, output
                     )
@@ -2093,7 +2105,7 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
                         visible_output = output[-3500:] if output else ""
                         return f"{visible_output}\n\n[VALIDATION] {validation}".strip()
                     output = f"{output}\n\n{validation}".strip()
-                if exit_code == 0:
+                elif exit_code == 0:
                     output += "\nDetected fatal error text despite exit code 0."
                 if attempt < MAX_RETRIES:
                     log_fn(f"  ⚠ exit {exit_code} — auto-fixing bash (attempt {attempt+1}/{MAX_RETRIES})…", "warn")

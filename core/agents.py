@@ -63,6 +63,8 @@ Environment:
 - git is NOT pre-installed — install with: subprocess.run(['apt-get','install','-y','-qq','git'], check=True, capture_output=True)
 - To clone a GitHub repo without git: requests.get('https://codeload.github.com/{user}/{repo}/zip/refs/heads/main')
 - Never use pydantic v2, polars, cryptography>=42, or packages requiring Rust compilation
+- `with` / `async with` blocks do NOT support `else` — only `for`, `while`, and `try` support `else`
+- Variables created inside a `with` or `async with` block should be assigned outside before the block if needed after it
 
 Rules:
 - You write a BUILD SCRIPT that creates deliverable files in /work — not the final app itself
