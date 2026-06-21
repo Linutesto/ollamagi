@@ -253,7 +253,26 @@ def chat(messages: list[dict], task_type: str = "orchestrator",
         payload["tools"] = tools
 
     if not stream:
-        data = _interruptible_post(payload, flow_id, call_timeout)
+        # Retry transient connection errors with exponential backoff (1s → 2s → 4s).
+        # Never retry stop events or real timeouts — only transient transport failures.
+        _TRANSIENT = (httpx.ConnectError, httpx.RemoteProtocolError,
+                      httpx.ReadError, httpx.WriteError, ConnectionResetError)
+        _last_err: Exception | None = None
+        for _attempt in range(3):
+            try:
+                data = _interruptible_post(payload, flow_id, call_timeout)
+                _last_err = None
+                break
+            except FlowStoppedException:
+                raise
+            except TimeoutError:
+                raise
+            except _TRANSIENT as e:
+                _last_err = e
+                if _attempt < 2:
+                    time.sleep(2 ** _attempt)
+        if _last_err is not None:
+            raise _last_err
         pt = data.get("prompt_eval_count", 0)
         ct = data.get("eval_count", 0)
         record_tokens(flow_id, pt, ct)

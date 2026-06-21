@@ -342,6 +342,34 @@ def _objective_constraints(objective: str, flow_type: str) -> str:
         "Alternative (no apt needed): download a GitHub ZIP with requests.get('https://codeload.github.com/{user}/{repo}/zip/refs/heads/main').\n"
         "GitHub repo names are case-sensitive. Never use check=True for apt-get commands.",
     ]
+    # Self-referential objectives about OllamAGI's own logs/flows
+    _SELF_LOG_KEYWORDS = ("agent log", "agent execution log", "flow log", "execution log",
+                          "failure pattern", "ollamagi log", "recurring failure", "task failure",
+                          "last 7 days", "last seven days", "analyze.*log", "analyse.*log",
+                          "identify.*failure", "identify.*pattern")
+    if any(kw in lower for kw in _SELF_LOG_KEYWORDS):
+        rules.append(
+            "OLLAMAGI DATA ACCESS: This objective requires reading OllamAGI's own execution history.\n"
+            f"The OllamAGI workspace is at: {WORKSPACE_DIR}  (accessible in-container via the host home mount)\n"
+            "Data structures:\n"
+            f"  - Per-flow log:      {WORKSPACE_DIR}/<flow-id>/flow_log.jsonl\n"
+            f"    Fields: {{flow_id, msg, level, ts}}  where ts is a Unix timestamp (float)\n"
+            f"  - Per-flow metadata: {WORKSPACE_DIR}/<flow-id>/flow.json\n"
+            f"    Fields: id, objective, status, created_at (Unix ts), flow_type, tasks[]\n"
+            "To collect logs from the last 7 days:\n"
+            "  import json, pathlib, time\n"
+            f"  ws = pathlib.Path('{WORKSPACE_DIR}')\n"
+            "  cutoff = time.time() - 7 * 86400\n"
+            "  rows = []\n"
+            "  for log_file in ws.glob('*/flow_log.jsonl'):\n"
+            "      for line in log_file.read_text(errors='replace').splitlines():\n"
+            "          try:\n"
+            "              e = json.loads(line)\n"
+            "              if e.get('ts', 0) >= cutoff: rows.append(e)\n"
+            "          except Exception: pass\n"
+            "  pathlib.Path('/work/raw_logs.jsonl').write_text('\\n'.join(json.dumps(r) for r in rows))\n"
+            "Also read flow.json for task-level pass/fail: flow['tasks'][i]['status'] in 'success'|'failed'|'running'."
+        )
     # System audit / host inspection objectives: inject SSH data-collection rule
     _AUDIT_KEYWORDS = ("audit", "health report", "workstation", "system check", "inspect.*system",
                        "performance issue", "storage issue", "service issue", "security issue")
@@ -1448,6 +1476,13 @@ print(f"Runtime smoke test passed for {entry.name} using {mode} with external ne
     finally:
         if container:
             stop_container(container)
+
+
+def _trim_history(history: list[dict], max_tail: int = 8) -> list[dict]:
+    """Keep the objective (first entry) + the last max_tail messages to avoid context overflow."""
+    if len(history) <= max_tail + 1:
+        return history
+    return [history[0]] + history[-max_tail:]
 
 
 # ── Planning ──────────────────────────────────────────────────────────────────
@@ -2616,7 +2651,7 @@ def run_flow(objective: str, flow_type: str | None = None,
 
                 try:
                     result = _execute_subtask(
-                        subtask, flow, task, conversation_history, log, flow_id
+                        subtask, flow, task, _trim_history(conversation_history), log, flow_id
                     )
                     failed = result.startswith("[FAILED") or _execution_failed(0, result)
                     subtask.result = result
