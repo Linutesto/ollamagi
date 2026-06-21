@@ -670,6 +670,7 @@ _REPORT_PATTERN = re.compile(
     r"\b(report|results?|findings|analysis|summary|dataset|export)\b",
     re.IGNORECASE,
 )
+_CODE_AGENTS = {"coder", "installer", "data_engineer", "devops", "pentester"}
 _SOURCE_SUFFIXES = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".sh"}
 _CONFIG_SUFFIXES = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env"}
 _REPORT_SUFFIXES = {".md", ".json", ".txt", ".csv", ".html", ".xml"}
@@ -2351,7 +2352,6 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         messages = history + [{"role": "user", "content": code_prompt}]
         # Always use a code-generation agent for Python execution — planning agents produce
         # orchestration text, not runnable scripts
-        _CODE_AGENTS = {"coder", "installer", "data_engineer", "devops", "pentester"}
         code_gen_agent = subtask.agent if subtask.agent in _CODE_AGENTS else "coder"
         code = _strip_fences(run_agent(code_gen_agent, messages, extra_ctx, flow_id=flow_id))
         if not code.strip():
