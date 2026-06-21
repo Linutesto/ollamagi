@@ -153,6 +153,49 @@ select.form-input { cursor: pointer; }
 .compact-toggle input:checked + .compact-slider::after { transform: translateX(18px); }
 .compact-label { font-size: 13px; font-weight: 600; color: var(--text2); }
 
+/* ARIA HISTORY */
+.aria-header { display:flex; align-items:center; gap:8px; padding:8px 12px;
+               border-bottom:1px solid var(--border); background:var(--bg);
+               position:sticky; top:0; z-index:10; }
+.aria-hdr-btn { background:none; border:none; color:var(--text2); font-size:17px;
+                cursor:pointer; padding:4px 8px; border-radius:6px; flex-shrink:0;
+                line-height:1; }
+.aria-hdr-btn:active { background:var(--bg2); }
+.aria-conv-name { flex:1; font-size:13px; color:var(--text2); font-weight:600;
+                  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                  text-align:center; }
+.aria-history-panel { display:none; background:var(--bg2);
+                      border-bottom:1px solid var(--border); max-height:240px;
+                      overflow-y:auto; }
+.aria-conv-item { display:flex; align-items:center; justify-content:space-between;
+                  padding:11px 14px; cursor:pointer;
+                  border-bottom:1px solid var(--border); gap:8px; }
+.aria-conv-item:active { background:var(--bg3); }
+.aria-conv-active { background:var(--bg3); }
+.aria-conv-item-name { font-size:13px; color:var(--text); flex:1; white-space:nowrap;
+                       overflow:hidden; text-overflow:ellipsis; }
+.aria-conv-item-meta { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.aria-conv-item-date { font-size:11px; color:var(--text2); }
+.aria-conv-del { background:none; border:none; color:var(--text2); cursor:pointer;
+                 font-size:13px; padding:2px 5px; border-radius:4px; }
+.aria-conv-del:active { background:var(--bg); }
+
+/* FLOW CONTINUATION */
+.continue-panel { margin:10px 0 4px; padding:12px 14px; background:var(--bg2);
+                  border-radius:12px; border:1px solid var(--border); }
+.continue-label { font-size:11px; font-weight:700; text-transform:uppercase;
+                  letter-spacing:.5px; color:var(--text2); margin-bottom:8px; }
+.continue-row { display:flex; gap:8px; align-items:flex-end; }
+.continue-input { flex:1; background:var(--bg3); border:1px solid var(--border);
+                  border-radius:8px; color:var(--text); padding:8px 10px;
+                  font-size:13px; resize:none; min-height:38px; max-height:110px;
+                  font-family:inherit; outline:none; line-height:1.4; }
+.continue-input:focus { border-color:var(--accent); }
+.continue-btn { background:var(--accent); color:#000; border:none; border-radius:8px;
+                padding:8px 14px; font-size:14px; font-weight:800; cursor:pointer;
+                flex-shrink:0; height:38px; }
+.continue-btn:active { background:#79c0ff; }
+
 /* LOGS */
 .log-line { display: flex; gap: 8px; padding: 4px 0;
             border-bottom: 1px solid #1a1f26; font-family: 'Courier New', monospace;
@@ -672,6 +715,14 @@ select.form-input { cursor: pointer; }
 
   <!-- CHAT PAGE -->
   <div class="page" id="page-chat">
+    <div class="aria-header">
+      <button class="aria-hdr-btn" onclick="toggleAriaHistory()" title="Conversation history">☰</button>
+      <span class="aria-conv-name" id="aria-conv-name">New conversation</span>
+      <button class="aria-hdr-btn" onclick="ariaNewConv()" title="New conversation">＋</button>
+    </div>
+    <div class="aria-history-panel" id="aria-history-panel">
+      <div id="aria-history-list"></div>
+    </div>
     <div id="chat-messages"></div>
     <div style="height:70px"></div><!-- spacer for fixed input -->
   </div>
@@ -1092,6 +1143,17 @@ function _metaHtml(flow) {
     </div>`;
   if (flow.replan_count > 0) h += `<div class="replan-banner">↻ Replanned ${flow.replan_count}× — agents adapted the task list</div>`;
   if (flow.repair_count > 0) h += `<div class="replan-banner">🛠 Final validation repaired ${flow.repair_count}×</div>`;
+  if (!isRunning) h += `
+    <div class="continue-panel">
+      <div class="continue-label">↻ Continue / correct this flow</div>
+      <div class="continue-row">
+        <textarea class="continue-input" id="continue-${flow.id}" rows="1"
+          placeholder="Add: also build dark mode…   Fix: the auth token format is wrong…"
+          oninput="autoResize(this)"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();continueFlow('${flow.id}');}"></textarea>
+        <button class="continue-btn" onclick="continueFlow('${flow.id}')">↻</button>
+      </div>
+    </div>`;
   return h;
 }
 
@@ -1937,6 +1999,106 @@ function downloadFile(flowId) {
 
 // ── CHAT ──
 let _chatHistory = [];   // {role, content}
+let _ariaConvId = null;
+
+// ── Aria conversation persistence (localStorage) ──
+function _ariaGenId() { return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+function _ariaConvLabel() {
+  const m = _chatHistory.find(m => m.role === 'user');
+  return m ? m.content.slice(0, 48) : 'New conversation';
+}
+function _ariaSaveConv() {
+  if (!_ariaConvId || !_chatHistory.length) return;
+  const name = _ariaConvLabel();
+  localStorage.setItem('aria_conv_' + _ariaConvId,
+    JSON.stringify({id: _ariaConvId, name, ts: Date.now(), messages: _chatHistory}));
+  let idx = JSON.parse(localStorage.getItem('aria_convs') || '[]');
+  idx = idx.filter(c => c.id !== _ariaConvId);
+  idx.unshift({id: _ariaConvId, name, ts: Date.now()});
+  localStorage.setItem('aria_convs', JSON.stringify(idx.slice(0, 50)));
+  const el = document.getElementById('aria-conv-name');
+  if (el) el.textContent = name;
+}
+function ariaNewConv() {
+  _ariaSaveConv();
+  _ariaConvId = _ariaGenId();
+  _chatHistory = [];
+  _showChatWelcome();
+  const el = document.getElementById('aria-conv-name');
+  if (el) el.textContent = 'New conversation';
+  closeAriaHistory();
+}
+function ariaLoadConv(id) {
+  _ariaSaveConv();
+  const raw = localStorage.getItem('aria_conv_' + id);
+  if (!raw) return;
+  const conv = JSON.parse(raw);
+  _ariaConvId = conv.id;
+  _chatHistory = conv.messages || [];
+  const el = document.getElementById('chat-messages');
+  el.innerHTML = '';
+  _chatHistory.forEach(m => _appendChatMsg(m.role, m.content, false));
+  const nameEl = document.getElementById('aria-conv-name');
+  if (nameEl) nameEl.textContent = conv.name;
+  closeAriaHistory();
+  const page = document.getElementById('page-chat');
+  if (page) setTimeout(() => { page.scrollTop = page.scrollHeight; }, 50);
+}
+function ariaDeleteConv(id, ev) {
+  ev.stopPropagation();
+  localStorage.removeItem('aria_conv_' + id);
+  let idx = JSON.parse(localStorage.getItem('aria_convs') || '[]');
+  localStorage.setItem('aria_convs', JSON.stringify(idx.filter(c => c.id !== id)));
+  if (_ariaConvId === id) ariaNewConv();
+  else openAriaHistory();
+}
+function toggleAriaHistory() {
+  const p = document.getElementById('aria-history-panel');
+  if (!p) return;
+  (p.style.display === 'block') ? closeAriaHistory() : openAriaHistory();
+}
+function openAriaHistory() {
+  const panel = document.getElementById('aria-history-panel');
+  if (!panel) return;
+  const idx = JSON.parse(localStorage.getItem('aria_convs') || '[]');
+  const list = document.getElementById('aria-history-list');
+  list.innerHTML = idx.length ? idx.map(c => {
+    const d = new Date(c.ts).toLocaleDateString([], {month:'short', day:'numeric'});
+    return `<div class="aria-conv-item ${c.id===_ariaConvId?'aria-conv-active':''}" onclick="ariaLoadConv('${c.id}')">
+      <span class="aria-conv-item-name">${esc(c.name)}</span>
+      <span class="aria-conv-item-meta">
+        <span class="aria-conv-item-date">${d}</span>
+        <button class="aria-conv-del" onclick="ariaDeleteConv('${c.id}',event)">✕</button>
+      </span>
+    </div>`;
+  }).join('') : '<div style="padding:12px 14px;font-size:13px;color:var(--text2)">No past conversations yet</div>';
+  panel.style.display = 'block';
+}
+function closeAriaHistory() {
+  const p = document.getElementById('aria-history-panel');
+  if (p) p.style.display = 'none';
+}
+
+// ── Flow continuation ──
+async function continueFlow(flowId) {
+  const input = document.getElementById('continue-' + flowId);
+  const text = (input?.value || '').trim();
+  if (!text) { toast('Enter a follow-up or correction first'); return; }
+  const flow = await fetch(`${API}/api/flows/${flowId}`).then(r=>r.json()).catch(()=>null);
+  const original = flow?.objective || '';
+  const objective = `Continue and extend work from flow ${flowId}.\n\nOriginal objective:\n${original}\n\nFollow-up / correction:\n${text}`;
+  const compact = document.getElementById('compact-ctx-toggle')?.checked || false;
+  input.value = '';
+  input.style.height = 'auto';
+  const res = await fetch(`${API}/api/flows/run`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({objective, base_flows: [flowId], compact_context: compact}),
+  }).then(r=>r.json()).catch(e=>({error:e.message}));
+  if (res.error) { toast('Error: ' + res.error); return; }
+  toast('Continuation flow launched ✓');
+  setTimeout(() => { switchTab('flows'); loadFlows(); }, 500);
+}
 let _chatStreaming = false;
 
 function _renderMarkdown(text) {
@@ -2040,6 +2202,7 @@ async function sendChat() {
   input.value = '';
   input.style.height = 'auto';
 
+  closeAriaHistory();
   // Clear welcome screen on first message
   const el = document.getElementById('chat-messages');
   if (el.querySelector('.chat-welcome')) el.innerHTML = '';
@@ -2106,7 +2269,10 @@ async function sendChat() {
     const bubble = document.getElementById('chat-streaming-bubble');
     if (bubble) { bubble.id = ''; bubble.innerHTML = _renderMarkdown(accumulated || '…'); }
   }
-  if (accumulated) _chatHistory.push({role: 'assistant', content: accumulated});
+  if (accumulated) {
+    _chatHistory.push({role: 'assistant', content: accumulated});
+    _ariaSaveConv();
+  }
   _chatScrollBottom();
   _chatStreaming = false;
   document.getElementById('chat-send-btn').textContent = '↑';
@@ -2159,8 +2325,11 @@ loadTokens();
 populateQuickList();
 setInterval(loadFlows, 10000);
 setInterval(loadTokens, 6000);
-// Show chat welcome when tab is first opened
-document.addEventListener('DOMContentLoaded', () => { _showChatWelcome(); });
+// Init Aria with a fresh conversation on page load
+document.addEventListener('DOMContentLoaded', () => {
+  _ariaConvId = _ariaGenId();
+  _showChatWelcome();
+});
 </script>
 </body>
 </html>
