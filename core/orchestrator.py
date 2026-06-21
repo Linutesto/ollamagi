@@ -1918,6 +1918,8 @@ def _fix_python(code: str, error_output: str, description: str, flow_id: str | N
         f"TASK: {description}\n\n"
         f"{workspace}\n\n"
         + (f"CURRENT /work SOURCE FILES:\n{work_sources}\n\n" if work_sources else "")
+        + (f"CURRENT /work DATA FILES (exact schemas — use these, don't guess):\n{_read_work_data(flow_id, max_bytes=6000)}\n\n"
+           if flow_id else "")
         + f"ERROR OUTPUT:\n{error_output[:2000]}\n\n"
         f"FAILING CODE (first 3000 chars):\n{code[:3000]}"
     )
@@ -2235,12 +2237,22 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         "    return results\n\n"
     )
 
+    # Inject data file content so code agents know the exact JSON/CSV schemas they'll read.
+    # Without this, they guess structures blind and fail silently on wrong keys/indices.
+    _work_data_ctx = _read_work_data(flow.id, max_bytes=8000)
+
+    _data_section = (
+        f"WORKSPACE DATA FILES — read these exact structures, do not guess schemas:\n{_work_data_ctx}\n\n"
+        if _work_data_ctx else ""
+    )
+
     if use_python:
         code_prompt = (
             f"TODAY IS {_ts_var}. Use this exact date/time in any reports, headers, or filenames.\n\n"
             f"Write a Python 3 script that accomplishes this subtask:\n\n"
             f"{subtask.description}\n\n"
             f"{contract_text}\n\n"
+            f"{_data_section}"
             "Environment: Python 3.11 container. Pre-installed: requests, httpx, aiohttp, rich, "
             "beautifulsoup4, lxml, python-dotenv, pyyaml, toml, psutil, loguru, colorama, "
             "selenium, webdriver-manager, duckduckgo-search.\n"
