@@ -2523,6 +2523,19 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
         return "[FAILED — max retries exceeded]"
 
 
+def _extract_missing_artifacts(report: str) -> list[str]:
+    """Pull /work-relative paths of missing files from a validation report string."""
+    # Match any /work/... path with any extension (including .log, .txt, .json, etc.)
+    hits = re.findall(r'/work/([\w.\-/]+\.[\w]+)', report)
+    # Deduplicate, exclude internal meta-files
+    _meta = {"flow_log.jsonl", "llm_calls.jsonl"}
+    seen: dict[str, None] = {}
+    for h in hits:
+        if h not in _meta:
+            seen[h] = None
+    return list(seen)
+
+
 def _repair_final_deliverables(
     flow: Flow,
     validation_report: str,
@@ -2532,6 +2545,15 @@ def _repair_final_deliverables(
     """Give the coder bounded chances to repair the real workspace after final validation."""
     report = validation_report
     for repair_index in range(1, max_repairs + 1):
+        # Extract the exact missing paths so the repair subtask is contracted to them
+        # and the coder is told explicitly what to create.
+        missing_artifacts = _extract_missing_artifacts(report)
+        missing_list = (
+            "\n".join(f"  - /work/{p}" for p in missing_artifacts)
+            if missing_artifacts
+            else "(see report above)"
+        )
+
         task = Task(
             id=f"repair-{repair_index}",
             flow_id=flow.id,
@@ -2551,14 +2573,21 @@ def _repair_final_deliverables(
             title="Repair and revalidate workspace",
             description=(
                 f"Deterministic validation failed with:\n{report}\n\n"
-                "Inspect all relevant files under /work, repair imports, interfaces, entrypoints, "
-                "configuration, documentation, and dependency manifests as needed. Then execute a "
-                "bounded local/offline validation. The build script must edit the existing deliverables."
+                f"CRITICAL — these files are MISSING and MUST be created by this script:\n"
+                f"{missing_list}\n\n"
+                "Write a Python script that:\n"
+                "1. Creates every missing file listed above with real, non-empty content\n"
+                "2. Repairs any other issues from the validation report (imports, entrypoints, "
+                "configuration, documentation, dependency manifests)\n"
+                "3. Verifies every missing file now exists at the correct path before exiting\n\n"
+                "The script must write the missing files directly — do not just run the original "
+                "validation script and hope it creates them. Use open(..., 'w') or pathlib.Path.write_text()."
             ),
             agent="coder",
             needs_container=True,
             container_type="python",
-            deliverable_kind="test",
+            deliverable_kind="artifact",
+            expected_artifacts=missing_artifacts,
         )
         task.subtasks = [subtask]
         flow.tasks.append(task)
