@@ -73,6 +73,7 @@ class Flow:
     repair_count: int = 0
     error: str = ""
     validation: str = ""
+    compact_context: bool = False
 
 
 # ── Registries ──────────────────────────────────────────────────────────────
@@ -1485,6 +1486,48 @@ def _trim_history(history: list[dict], max_tail: int = 8) -> list[dict]:
     return [history[0]] + history[-max_tail:]
 
 
+_COMPACT_MARKER = "[CONTEXT SUMMARY]"
+_COMPACT_THRESHOLD = 10   # start compacting once history exceeds this many entries
+_COMPACT_TAIL = 6         # always keep the last N raw messages verbatim
+
+
+def _compact_history(history: list[dict], flow_id: str) -> list[dict]:
+    """LLM-summarize old history into one compressed message, keeping the last few raw entries.
+
+    Layout returned: [objective, compact_summary_msg, ...last_N_raw]
+    When history is already compacted (has a summary), the prior summary is included in the
+    next summarization so nothing is lost across multiple compaction rounds.
+    """
+    if len(history) <= _COMPACT_THRESHOLD:
+        return history
+
+    objective = history[0]
+    tail = history[-_COMPACT_TAIL:]
+    to_compress = history[1:-_COMPACT_TAIL]
+
+    lines = []
+    for m in to_compress:
+        content = m["content"]
+        role = m["role"]
+        # If a prior compact summary is in the list, include it in full
+        if content.startswith(_COMPACT_MARKER):
+            lines.append(content)
+        else:
+            lines.append(f"{role}: {content[:400]}")
+
+    summary_input = "\n".join(lines)
+    summary = chat(
+        [{"role": "user", "content":
+          f"Summarize the following completed subtask history into 1-2 sentences per item. "
+          f"Preserve key outputs, file paths, and error messages. Be concise.\n\n{summary_input}"}],
+        task_type="fast",
+        flow_id=flow_id,
+    )
+    summary_msg = {"role": "assistant",
+                   "content": f"{_COMPACT_MARKER}: {summary}"}
+    return [objective, summary_msg] + tail
+
+
 # ── Planning ──────────────────────────────────────────────────────────────────
 def _generate_tasks(flow: Flow, mem_ctx: str) -> list[Task]:
     roles = FLOW_TYPE_ROLES.get(flow.flow_type, FLOW_TYPE_ROLES["general"])
@@ -2487,12 +2530,14 @@ def _repair_final_deliverables(
 def run_flow(objective: str, flow_type: str | None = None,
              broadcast: Callable | None = None,
              tasks: list[dict] | None = None,
-             base_flows: list[str] | None = None) -> Flow:
+             base_flows: list[str] | None = None,
+             compact_context: bool = False) -> Flow:
     flow_id = uuid.uuid4().hex[:8]
     detected_type = flow_type or _detect_flow_type(objective)
     title = objective[:60] + ("..." if len(objective) > 60 else "")
 
-    flow = Flow(id=flow_id, title=title, objective=objective, flow_type=detected_type)
+    flow = Flow(id=flow_id, title=title, objective=objective, flow_type=detected_type,
+                compact_context=compact_context)
     _flows[flow_id] = flow
     stop_event = threading.Event()
     _stop_signals[flow_id] = stop_event
@@ -2650,8 +2695,13 @@ def run_flow(objective: str, flow_type: str | None = None,
                 _save(flow)
 
                 try:
+                    _hist = (
+                        _compact_history(conversation_history, flow_id)
+                        if flow.compact_context
+                        else _trim_history(conversation_history)
+                    )
                     result = _execute_subtask(
-                        subtask, flow, task, _trim_history(conversation_history), log, flow_id
+                        subtask, flow, task, _hist, log, flow_id
                     )
                     failed = result.startswith("[FAILED") or _execution_failed(0, result)
                     subtask.result = result

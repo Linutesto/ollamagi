@@ -141,6 +141,17 @@ select.form-input { cursor: pointer; }
            cursor: pointer; letter-spacing: 0.5px; transition: all 0.15s; }
 .run-btn:active { transform: scale(0.98); background: #79c0ff; }
 .run-btn:disabled { opacity: 0.5; }
+.compact-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer;
+                  margin-bottom: 14px; user-select: none; }
+.compact-toggle input { display: none; }
+.compact-slider { width: 40px; height: 22px; background: var(--border); border-radius: 11px;
+                  position: relative; transition: background 0.2s; flex-shrink: 0; }
+.compact-slider::after { content: ''; position: absolute; top: 3px; left: 3px;
+                         width: 16px; height: 16px; background: #fff; border-radius: 50%;
+                         transition: transform 0.2s; }
+.compact-toggle input:checked + .compact-slider { background: var(--accent); }
+.compact-toggle input:checked + .compact-slider::after { transform: translateX(18px); }
+.compact-label { font-size: 13px; font-weight: 600; color: var(--text2); }
 
 /* LOGS */
 .log-line { display: flex; gap: 8px; padding: 4px 0;
@@ -520,6 +531,11 @@ select.form-input { cursor: pointer; }
       <label class="form-label">Objective</label>
       <textarea class="form-input" id="run-objective" placeholder="Describe what you want the agents to accomplish…"></textarea>
     </div>
+    <label class="compact-toggle" title="Summarize older steps with the LLM instead of dropping them — enables longer flows at the cost of one extra fast LLM call per subtask">
+      <input type="checkbox" id="compact-ctx-toggle">
+      <span class="compact-slider"></span>
+      <span class="compact-label">Context compaction</span>
+    </label>
     <button class="run-btn" id="run-btn" onclick="startFlow()">▶ Launch Flow</button>
 
     <div style="margin-top:22px;padding-top:14px;border-top:1px solid var(--border)">
@@ -840,17 +856,19 @@ function closeSheet() {
 async function sheetLaunch() {
   const obj = document.getElementById('sheet-objective').value.trim();
   if (!obj) { toast('Objective is empty'); return; }
+  const compact = document.getElementById('compact-ctx-toggle').checked;
   const btn = document.getElementById('sheet-launch-btn');
   btn.disabled = true; btn.textContent = '⏳ Launching…';
   const res = await fetch(`${API}/api/flows/run`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ objective: obj, flow_type: _sheetConfig?.key || undefined }),
+    body: JSON.stringify({ objective: obj, flow_type: _sheetConfig?.key || undefined,
+                           compact_context: compact }),
   }).then(r=>r.json()).catch(e=>({error:e.message}));
   btn.disabled = false; btn.textContent = '▶ Launch Flow';
   closeSheet();
   if (res.error) { toast('Error: ' + res.error); return; }
-  toast('Flow launched ✓');
+  toast('Flow launched ✓' + (compact ? ' (compact mode)' : ''));
   setTimeout(() => { switchTab('flows'); loadFlows(); }, 600);
 }
 
@@ -1262,17 +1280,19 @@ function selectType(btn) {
 async function startFlow() {
   const obj = document.getElementById('run-objective').value.trim();
   if (!obj) { toast('Enter an objective first'); return; }
+  const compact = document.getElementById('compact-ctx-toggle').checked;
   const btn = document.getElementById('run-btn');
   btn.disabled = true; btn.textContent = '⏳ Launching…';
   const res = await fetch(`${API}/api/flows/run`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({objective: obj, flow_type: selectedType || undefined}),
+    body: JSON.stringify({objective: obj, flow_type: selectedType || undefined,
+                          compact_context: compact}),
   }).then(r=>r.json()).catch(e=>({error:e.message}));
   btn.disabled = false; btn.textContent = '▶ Launch Flow';
   if (res.error) { toast('Error: ' + res.error); return; }
   document.getElementById('run-objective').value = '';
-  toast('Flow launched ✓');
+  toast('Flow launched ✓' + (compact ? ' (compact mode)' : ''));
   setTimeout(() => { switchTab('flows'); loadFlows(); }, 600);
 }
 

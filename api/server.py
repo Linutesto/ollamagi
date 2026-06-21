@@ -113,7 +113,8 @@ async def start_flow(body: dict, background_tasks: BackgroundTasks):
         return JSONResponse({"error": "objective required"}, status_code=400)
     flow_type = body.get("flow_type") or None
     base_flows = body.get("base_flows") or []
-    background_tasks.add_task(_run_bg, objective, flow_type, base_flows)
+    compact_context = bool(body.get("compact_context", False))
+    background_tasks.add_task(_run_bg, objective, flow_type, base_flows, compact_context)
     return JSONResponse({"status": "started", "message": "Flow starting..."})
 
 
@@ -594,10 +595,11 @@ async def websocket_endpoint(ws: WebSocket):
             _ws_clients.remove(ws)
 
 
-def _run_bg(objective: str, flow_type: str | None, base_flows: list | None = None):
+def _run_bg(objective: str, flow_type: str | None, base_flows: list | None = None,
+            compact_context: bool = False):
     """Run flow in a background thread and broadcast updates."""
     try:
         flow = run_flow(objective, flow_type=flow_type, broadcast=broadcast_sync,
-                        base_flows=base_flows or [])
+                        base_flows=base_flows or [], compact_context=compact_context)
     except Exception as e:
         broadcast_sync({"type": "error", "msg": str(e)})
