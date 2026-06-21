@@ -266,8 +266,16 @@ def _detect_flow_type(objective: str) -> str:
     # Security first — unambiguous intent
     if any(w in obj for w in ["pentest", "hack", "security audit", "vuln", "exploit", "bug bounty", "ctf"]):
         return "security"
-    # Agent/AI development — unambiguous intent
-    if any(w in obj for w in ["autonomous agent", "ai agent", "llm agent", "build an agent", "build a bot"]):
+    # Research first — objectives that START with a research verb are always research flows,
+    # even if they mention agents, SaaS, or products as the topic being researched
+    _RESEARCH_VERBS = ("research ", "analyze ", "analyse ", "study ", "explore ",
+                       "survey ", "compare ", "investigate ", "audit ", "identify ")
+    if any(obj.startswith(v) for v in _RESEARCH_VERBS):
+        return "research"
+    # Agent/AI development — must be about BUILDING an agent, not USING one
+    _AGENT_BUILD = ["build an agent", "build a bot", "create an agent", "make an agent",
+                    "autonomous agent", "llm agent", "ai agent system", "build a chatbot"]
+    if any(w in obj for w in _AGENT_BUILD):
         return "agent_development"
     # Scraping/automation — check before product to avoid "scrape product prices" → product
     if any(w in obj for w in ["scrape", "crawl", "automate", "automation", "scheduler", "workflow"]):
@@ -281,14 +289,15 @@ def _detect_flow_type(objective: str) -> str:
     # Content/writing
     if any(w in obj for w in ["write a blog", "write an article", "write a report", "write documentation", "write a whitepaper", "write a readme"]):
         return "content"
-    # Research — check before product to avoid "research the top SaaS models" → product
+    # Research — broader check (not just at start)
     if any(w in obj for w in ["research ", "analyze ", "study ", "explore ", "survey ", "compare "]):
         return "research"
     # Product/business — broader keywords last in high-intent group
     if any(w in obj for w in ["product", "saas", "revenue", "monetize", "business", "roi", "sell", "startup"]):
         return "product_development"
-    # Broader agent/tool/bot pattern
-    if any(w in obj for w in ["agent", "autonomous", "skill", "tool", "ai system", "llm", "chatbot"]):
+    # Broader agent/tool/bot pattern — only when clearly building something
+    if any(w in obj for w in ["build a", "create a", "make a"]) and any(
+            w in obj for w in ["agent", "tool", "bot", "chatbot", "llm", "ai system"]):
         return "agent_development"
     # Broader infra patterns
     if any(w in obj for w in ["docker", "monitoring", "systemd", "nginx"]):
@@ -1909,11 +1918,21 @@ def _fix_python(code: str, error_output: str, description: str, flow_id: str | N
         f"TASK: {description}\n\n"
         f"{workspace}\n\n"
         + (f"CURRENT /work SOURCE FILES:\n{work_sources}\n\n" if work_sources else "")
-        + f"ERROR OUTPUT:\n{error_output[:3000]}\n\n"
-        f"FAILING CODE:\n{code[:10000]}"
+        + f"ERROR OUTPUT:\n{error_output[:2000]}\n\n"
+        f"FAILING CODE (first 3000 chars):\n{code[:3000]}"
     )
     fixed = chat([{"role": "user", "content": prompt}], task_type="coder", flow_id=flow_id)
     fixed = _strip_fences(fixed)
+    if not fixed.strip():
+        # Context budget exhausted — thinking tokens consumed all of num_predict. Use minimal prompt.
+        _mini = (
+            f"Task: {description[:200]}\n"
+            f"Error: {error_output[:400]}\n"
+            "Write a Python build script that creates the required files in /work/ using "
+            "pathlib.Path.write_text(). Return ONLY raw Python code."
+        )
+        fixed = _strip_fences(chat([{"role": "user", "content": _mini}],
+                                   task_type="coder", max_tokens=4096, flow_id=flow_id))
     return fixed
 
 
@@ -2304,12 +2323,37 @@ def _execute_subtask(subtask: Subtask, flow: Flow, task: Task,
             "- Wrap the main logic in try/except and print any errors clearly\n"
             "- Return ONLY raw Python code — NO markdown fences, NO explanation"
         )
+        # For source deliverables: explicitly tell the coder to write the file, not run it
+        if subtask.deliverable_kind == "source" and subtask.expected_artifacts:
+            _src_paths = "\n".join(f"  pathlib.Path('/work/{a}').write_text(code_str)" for a in subtask.expected_artifacts)
+            code_prompt += (
+                "\n\nSOURCE DELIVERABLE — CRITICAL RULES:\n"
+                "Your job is to WRITE the source files into /work/, not to execute their logic.\n"
+                "Step 1: Write a stub of each file in the FIRST lines of your build script:\n"
+                + "\n".join(f"  pathlib.Path('/work/{a}').write_text('# stub')" for a in subtask.expected_artifacts)
+                + "\nStep 2: Generate the final content as a Python string, then overwrite:\n"
+                + _src_paths
+                + "\nStep 3: Validate with ast.parse() for .py files. Never run the generated app directly."
+            )
         messages = history + [{"role": "user", "content": code_prompt}]
         # Always use a code-generation agent for Python execution — planning agents produce
         # orchestration text, not runnable scripts
         _CODE_AGENTS = {"coder", "installer", "data_engineer", "devops", "pentester"}
         code_gen_agent = subtask.agent if subtask.agent in _CODE_AGENTS else "coder"
         code = _strip_fences(run_agent(code_gen_agent, messages, extra_ctx, flow_id=flow_id))
+        if not code.strip():
+            # Model returned empty — thinking consumed all tokens or context was too large.
+            # Retry with a minimal self-contained prompt (no history, no extra_ctx).
+            _artifacts_hint = ", ".join(f"/work/{a}" for a in (subtask.expected_artifacts or []))
+            _mini_prompt = (
+                f"Task: {subtask.description[:400]}\n"
+                f"Write files: {_artifacts_hint or 'required /work/ files'}\n"
+                "Write a Python build script that creates these files with pathlib.Path.write_text().\n"
+                "Return ONLY raw Python code. No markdown."
+            )
+            code = _strip_fences(run_agent(code_gen_agent,
+                                           [{"role": "user", "content": _mini_prompt}],
+                                           flow_id=flow_id))
 
         for attempt in range(MAX_RETRIES + 1):
             subtask.attempts = attempt + 1

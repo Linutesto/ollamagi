@@ -223,7 +223,7 @@ _CALL_PROFILES = {
     "orchestrator": {"num_predict": 2048, "timeout": 600.0, "think": False},
     "analysis":     {"num_predict": 3072, "timeout": 600.0, "think": True},
     "tools":        {"num_predict": 3072, "timeout": 600.0, "think": False},
-    "coder":        {"num_predict": 4096, "timeout": 600.0, "think": True},
+    "coder":        {"num_predict": 8192, "timeout": 600.0, "think": True},
 }
 
 
