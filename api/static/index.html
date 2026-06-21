@@ -46,7 +46,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
 /* PAGES */
 .pages { flex: 1; overflow: hidden; position: relative; }
-.page { position: absolute; inset: 0; overflow-y: auto; display: none;
+.page { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; display: none;
         padding: 14px 14px calc(var(--nav-h) + 14px); }
 .page.active { display: block; }
 
@@ -471,20 +471,24 @@ select.form-input { cursor: pointer; }
                white-space: pre-wrap; word-break: break-word; line-height: 1.5;
                max-height: 350px; overflow-y: auto; background: var(--bg); padding: 6px 8px; border-radius: 4px; }
 /* CHAT */
-#chat-messages { display: flex; flex-direction: column; gap: 14px; padding-bottom: 8px; }
-.chat-msg { display: flex; flex-direction: column; gap: 4px; max-width: 92%; }
+#chat-messages { display: flex; flex-direction: column; gap: 14px; padding-bottom: 8px;
+                 width: 100%; min-width: 0; overflow-x: hidden; box-sizing: border-box; }
+.chat-msg { display: flex; flex-direction: column; gap: 4px;
+            max-width: min(92%, calc(100vw - 24px)); min-width: 0; }
 .chat-msg.user { align-self: flex-end; align-items: flex-end; }
 .chat-msg.assistant { align-self: flex-start; align-items: flex-start; }
 .chat-bubble { padding: 10px 14px; border-radius: 16px; font-size: 14px; line-height: 1.55;
-               word-break: break-word; }
+               word-break: break-word; overflow-wrap: anywhere;
+               min-width: 0; max-width: 100%; box-sizing: border-box; }
 .chat-msg.user .chat-bubble { background: var(--accent); color: #000; border-bottom-right-radius: 4px; }
 .chat-msg.assistant .chat-bubble { background: var(--bg2); border: 1px solid var(--border);
                                     border-bottom-left-radius: 4px; color: var(--text); }
 .chat-bubble code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px;
-                    font-family: monospace; font-size: 12px; }
+                    font-family: monospace; font-size: 12px; word-break: break-all; }
 .chat-bubble pre { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
-                   padding: 10px 12px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.4; }
-.chat-bubble pre code { background: none; padding: 0; font-size: 12px; }
+                   padding: 10px 12px; overflow-x: auto; margin: 8px 0; font-size: 12px;
+                   line-height: 1.4; max-width: 100%; box-sizing: border-box; }
+.chat-bubble pre code { background: none; padding: 0; font-size: 12px; word-break: normal; }
 .chat-bubble p { margin-bottom: 6px; }
 .chat-bubble p:last-child { margin-bottom: 0; }
 .chat-bubble ul, .chat-bubble ol { padding-left: 18px; margin-bottom: 6px; }
