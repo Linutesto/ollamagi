@@ -221,6 +221,7 @@ def _flow_to_dict(flow: Flow) -> dict:
         "memory_items_stored": flow.memory_items_stored,
         "replan_count": flow.replan_count,
         "repair_count": flow.repair_count,
+        "compact_context": flow.compact_context,
         "error": flow.error,
         "validation": flow.validation,
         "_tokens": tok,
